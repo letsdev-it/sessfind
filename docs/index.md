@@ -4,9 +4,9 @@
 
 # sessfind
 
-**CLI tool to search and resume AI sessions across GitHub Copilot, Claude Code, and OpenCode.**
+**CLI tool to search and resume AI sessions across GitHub Copilot, Claude Code, OpenCode, and Cursor.**
 
-*GitHub Copilot · Claude Code · OpenCode*
+*GitHub Copilot · Claude Code · OpenCode · Cursor*
 
 [letsdev.it](https://letsdev.it)
 
@@ -16,7 +16,7 @@
 
 ## What is sessfind?
 
-`sessfind` indexes and searches your AI assistant sessions from **GitHub Copilot**, **Claude Code**, and **OpenCode** in one place, and lets you **resume** a session from the UI or CLI. Ever had a conversation about a topic days ago and could not find it? `sessfind` is for that.
+`sessfind` indexes and searches your AI assistant sessions from **GitHub Copilot**, **Claude Code**, **OpenCode**, and **Cursor** in one place, and lets you **resume** a session from the UI or CLI. Ever had a conversation about a topic days ago and could not find it? `sessfind` is for that.
 
 ## Features
 
@@ -36,6 +36,7 @@
 | **GitHub Copilot** | `~/.copilot/session-state/*/events.jsonl` | `copilot --resume=SESSION_ID` |
 | **Claude Code** | `~/.claude/projects/*/` | `claude --resume SESSION_ID` |
 | **OpenCode** | `~/.local/share/opencode/opencode.db` | `opencode --session SESSION_ID` |
+| **Cursor** | `~/.cursor/projects/*/agent-transcripts/` | `cursor PROJECT_PATH` |
 
 ## Quick Links
 

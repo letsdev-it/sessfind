@@ -17,6 +17,7 @@ use crate::indexer::engine::{IndexEngine, SearchParams};
 use crate::sources::SessionSource;
 use crate::sources::claude_code::ClaudeCodeSource;
 use crate::sources::copilot::CopilotSource;
+use crate::sources::cursor::CursorSource;
 use crate::sources::opencode::OpenCodeSource;
 
 #[derive(Parser)]
@@ -37,7 +38,7 @@ struct Cli {
 enum Commands {
     /// Index sessions from all sources
     Index {
-        /// Source to index (claude, opencode, copilot, all)
+        /// Source to index (claude, opencode, copilot, cursor, all)
         #[arg(long, default_value = "all")]
         source: String,
         /// Force re-index all sessions
@@ -48,7 +49,7 @@ enum Commands {
     Search {
         /// Search query
         query: String,
-        /// Filter by source (claude, opencode, copilot)
+        /// Filter by source (claude, opencode, copilot, cursor)
         #[arg(long, short = 's')]
         source: Option<String>,
         /// Filter by project name (substring match)
@@ -79,7 +80,7 @@ enum Commands {
     /// Set LLM model override for a provider
     #[command(name = "llm-model-set")]
     LlmModelSet {
-        /// Provider name (claude, opencode, copilot)
+        /// Provider name (claude, opencode, copilot, cursor)
         provider: String,
         /// Model identifier (e.g. sonnet, anthropic/claude-sonnet-4-6)
         model: String,
@@ -87,7 +88,7 @@ enum Commands {
     /// Remove LLM model override (use provider's default)
     #[command(name = "llm-model-unset")]
     LlmModelUnset {
-        /// Provider name (claude, opencode, copilot)
+        /// Provider name (claude, opencode, copilot, cursor)
         provider: String,
     },
     /// Watch session directories and re-index on changes
@@ -114,12 +115,14 @@ fn get_sources(filter: &str) -> Vec<Box<dyn SessionSource>> {
             sources.push(Box::new(ClaudeCodeSource::new()));
             sources.push(Box::new(OpenCodeSource::new()));
             sources.push(Box::new(CopilotSource::new()));
+            sources.push(Box::new(CursorSource::new()));
         }
         "claude" => sources.push(Box::new(ClaudeCodeSource::new())),
         "opencode" => sources.push(Box::new(OpenCodeSource::new())),
         "copilot" => sources.push(Box::new(CopilotSource::new())),
+        "cursor" => sources.push(Box::new(CursorSource::new())),
         other => {
-            eprintln!("Unknown source: {other}. Available: claude, opencode, copilot, all");
+            eprintln!("Unknown source: {other}. Available: claude, opencode, copilot, cursor, all");
         }
     }
     sources
@@ -294,6 +297,7 @@ fn main() -> Result<()> {
                     models::Source::ClaudeCode => format!("\x1b[35m{:<10}\x1b[0m", "claude"),
                     models::Source::OpenCode => format!("\x1b[36m{:<10}\x1b[0m", "opencode"),
                     models::Source::Copilot => format!("\x1b[33m{:<10}\x1b[0m", "copilot"),
+                    models::Source::Cursor => format!("\x1b[32m{:<10}\x1b[0m", "cursor"),
                 };
 
                 println!(
@@ -367,12 +371,14 @@ fn main() -> Result<()> {
             let claude = engine.session_count(Some("claude"))?;
             let opencode = engine.session_count(Some("opencode"))?;
             let copilot = engine.session_count(Some("copilot"))?;
+            let cursor = engine.session_count(Some("cursor"))?;
             let total = engine.session_count(None)?;
 
             println!("\x1b[1mIndexed sessions:\x1b[0m");
             println!("  \x1b[35mClaude Code:\x1b[0m {claude}");
             println!("  \x1b[36mOpenCode:\x1b[0m    {opencode}");
             println!("  \x1b[33mCopilot:\x1b[0m     {copilot}");
+            println!("  \x1b[32mCursor:\x1b[0m      {cursor}");
             println!("  Total:       {total}");
             println!();
 
@@ -425,7 +431,7 @@ fn main() -> Result<()> {
             );
         }
         Commands::LlmModelSet { provider, model } => {
-            let valid = ["claude", "opencode", "copilot"];
+            let valid = ["claude", "opencode", "copilot", "cursor"];
             if !valid.contains(&provider.as_str()) {
                 eprintln!(
                     "Unknown provider: {provider}. Available: {}",

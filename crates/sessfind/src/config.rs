@@ -77,6 +77,13 @@ pub fn copilot_session_dir() -> PathBuf {
         .join("session-state")
 }
 
+pub fn cursor_projects_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".cursor")
+        .join("projects")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

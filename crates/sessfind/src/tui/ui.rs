@@ -207,6 +207,7 @@ fn draw_results_list(f: &mut Frame, app: &App, area: Rect) {
                 crate::models::Source::ClaudeCode => Color::Magenta,
                 crate::models::Source::OpenCode => Color::Cyan,
                 crate::models::Source::Copilot => Color::Yellow,
+                crate::models::Source::Cursor => Color::Green,
             };
 
             let date = r.timestamp.format("%Y-%m-%d %H:%M");
@@ -312,6 +313,7 @@ fn draw_detail_pane(f: &mut Frame, app: &App, area: Rect) {
         crate::models::Source::ClaudeCode => Color::Magenta,
         crate::models::Source::OpenCode => Color::Cyan,
         crate::models::Source::Copilot => Color::Yellow,
+        crate::models::Source::Cursor => Color::Green,
     };
 
     lines.push(Line::from(vec![

@@ -1,6 +1,6 @@
 [package]
 name = "sessfind-semantic"
-version = "0.1.3"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Semantic search plugin for sessfind — optional, uses embedded ML model."
@@ -8,7 +8,7 @@ license = "MIT"
 repository = "https://github.com/letsdev-it/sessfind"
 
 [dependencies]
-sessfind-common = "0.2.0"
+sessfind-common = "0.3.0"
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
