@@ -41,9 +41,6 @@ jobs:
       pull-requests: read
     outputs:
       releases_created: ${{ steps.release_plz.outputs.releases_created }}
-      # tag_name is the actual tag created by release-plz (e.g. sessfind-v0.2.0); passed to
-      # upload-release-assets so it does not need to reconstruct the tag from Cargo.toml.
-      tag_name: ${{ steps.release_plz.outputs.tag_name }}
     steps:
       - name: Require CARGO_REGISTRY_TOKEN
         run: |
@@ -97,22 +94,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # Check out the exact tag produced by release-plz rather than the triggering commit SHA.
-          ref: ${{ needs.release-plz-release.outputs.tag_name }}
+          # Use the tag that triggered this workflow run.
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Resolve release tag
         id: meta
-        run: |
-          set -euo pipefail
-          # Use the tag name passed from the release-plz-release job; no Cargo.toml parsing needed.
-          TAG="${{ needs.release-plz-release.outputs.tag_name }}"
-          if [ -z "${TAG}" ]; then
-            echo "::error::release-plz did not output tag_name; cannot upload assets."
-            exit 1
-          fi
-          echo "ref=refs/tags/${TAG}" >> "${GITHUB_OUTPUT}"
+        run: echo "ref=refs/tags/${{ github.ref_name }}" >> "${GITHUB_OUTPUT}"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
