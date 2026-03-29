@@ -28,7 +28,7 @@
 - Resume any session directly from the search results
 - Incremental indexing — only processes new/changed sessions
 - **Automatic indexing** — background watcher re-indexes on session changes ([details](docs/usage/automatic-indexing.md))
-- **Agent skill** — use sessfind directly from GitHub Copilot CLI or Claude Code ([details](docs/usage/agent-skill.md))
+- **Agent skill** — use sessfind directly from GitHub Copilot CLI, Claude Code, or OpenCode ([details](docs/usage/agent-skill.md))
 - Zero external runtime dependencies — single static binary
 
 ## Supported Sources
@@ -67,7 +67,7 @@ Combine both: `sessfind --index`. See [Quick Start docs](https://letsdev-it.gith
 - [Search Modes](https://letsdev-it.github.io/sessfind/usage/search-modes/) (FTS, Fuzzy, LLM, Semantic)
 - [LLM Configuration](https://letsdev-it.github.io/sessfind/usage/llm-configuration/)
 - [Automatic Indexing](docs/usage/automatic-indexing.md) (`sessfind watch`, shell hooks, cron)
-- [Agent Skill](https://letsdev-it.github.io/sessfind/usage/agent-skill/) (use sessfind from Copilot CLI / Claude Code)
+- [Agent Skill](https://letsdev-it.github.io/sessfind/usage/agent-skill/) (use sessfind from Copilot CLI / Claude Code / OpenCode)
 - [Semantic Search Plugin](https://letsdev-it.github.io/sessfind/plugins/semantic-search/)
 - [Architecture & How It Works](https://letsdev-it.github.io/sessfind/architecture/how-it-works/)
 - [Contributing](https://letsdev-it.github.io/sessfind/contributing/)
