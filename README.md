@@ -24,6 +24,7 @@
 - Interactive TUI with split-pane layout, real-time filtering, and session preview
 - Fuzzy substring matching as alternative search mode
 - **Semantic search** — find conceptually similar sessions using ML embeddings (optional plugin)
+- **LLM search** — re-rank results using installed AI CLI tools (Claude Code, OpenCode, Copilot)
 - Resume any session directly from the search results
 - Incremental indexing — only processes new/changed sessions
 - Zero external runtime dependencies — single static binary
@@ -113,9 +114,9 @@ Opens a full-screen terminal UI with:
 |-----|--------|
 | *Type* | Filter sessions in real-time |
 | `Tab` | Switch focus between search and results |
-| `Shift+Tab` | Toggle search mode (FTS / Fuzzy / Semantic) |
+| `Shift+Tab` | Toggle search mode (FTS / Fuzzy / LLM / Semantic*) |
 | `Up/Down`, `j/k` | Navigate results |
-| `Enter` | Resume selected session (or trigger Semantic search) |
+| `Enter` | Resume selected session (or trigger search) |
 | `PgUp/PgDn` | Scroll session preview |
 | `Ctrl+U` | Clear search input |
 | `?` | Show help popup |
@@ -126,16 +127,38 @@ Opens a full-screen terminal UI with:
 **FTS (Full-Text Search)** — default, powered by tantivy BM25:
 
 ```
-kalkulator              single keyword
-kalkulator b2b          any of these words (OR)
-+kalkulator +b2b        all words required (AND)
-"kalkulator b2b"        exact phrase
-kalkulat*               prefix wildcard
+shopping                single keyword
+shopping assistant      any of these words (OR)
++shopping +assistant    all words required (AND)
+"shopping assistant"    exact phrase
+shopp*                  prefix wildcard
 ```
 
 **Fuzzy** — case-insensitive substring match across content, project name, and title.
 
+**LLM** — uses installed AI CLI tools (Claude Code, OpenCode, Copilot) to re-rank FTS results by relevance. Each detected tool appears as a separate mode (e.g., "LLM (claude)", "LLM (opencode)"). Press `Enter` to trigger search — sessfind first runs FTS to get candidates, then sends them to the selected LLM for intelligent re-ranking. No extra installation needed — if you have `claude`, `opencode`, or `copilot` on your PATH, the mode appears automatically.
+
 **Semantic** — ML embedding similarity search (requires `sessfind-semantic` plugin). Finds conceptually similar sessions even when exact keywords don't match. Supports Polish and English. Press `Enter` to trigger search (not instant — runs the ML model).
+
+#### LLM Model Configuration
+
+By default, each LLM backend uses its own default model. You can override the model per provider:
+
+```bash
+# Set model for a specific provider
+sessfind llm-model-set claude sonnet
+sessfind llm-model-set opencode anthropic/claude-sonnet-4-6
+
+# Remove override (use tool's default)
+sessfind llm-model-unset claude
+
+# Check current configuration
+sessfind stats
+```
+
+Model names depend on the provider — each tool uses its own naming convention. The TUI badge shows the active model: `LLM (claude)` or `LLM (claude:sonnet)` when a model override is set.
+
+Configuration is stored in `~/.config/sessfind/config.json`.
 
 ### CLI Commands
 
@@ -146,7 +169,7 @@ sessfind index --source claude     # index only Claude Code
 sessfind index --force             # re-index everything
 
 # Search from CLI (non-interactive)
-sessfind search "kalkulator b2b"
+sessfind search "shopping assistant"
 sessfind search "react hook" --source claude --limit 20
 sessfind search "auth" --after 2025-01-01 --before 2025-03-01
 sessfind search "deploy" -p my-project
@@ -154,14 +177,22 @@ sessfind search "deploy" -p my-project
 # Semantic search (requires sessfind-semantic plugin)
 sessfind search "how to handle authentication" --method semantic
 
+# LLM search (uses first detected AI CLI tool)
+sessfind search "how to handle authentication" --method llm
+
 # Show full session content
 sessfind show SESSION_ID
 
-# Index statistics (includes semantic plugin status)
+# Index statistics (includes semantic plugin status and LLM backends)
 sessfind stats
 
 # Dump all chunks as JSONL (used by plugins)
 sessfind dump-chunks
+
+# Configure LLM model per provider
+sessfind llm-model-set claude sonnet
+sessfind llm-model-set opencode anthropic/claude-sonnet-4-6
+sessfind llm-model-unset claude    # revert to tool's default model
 ```
 
 ### CLI Search Flags
@@ -173,7 +204,7 @@ sessfind dump-chunks
 | `--after` | Only results after date (`YYYY-MM-DD`) |
 | `--before` | Only results before date (`YYYY-MM-DD`) |
 | `-n, --limit` | Max results (default: 10) |
-| `-m, --method` | Search method: `fts` (default), `fuzzy`, `semantic` |
+| `-m, --method` | Search method: `fts` (default), `fuzzy`, `semantic`, `llm` |
 
 ## How It Works
 
@@ -185,7 +216,9 @@ sessfind dump-chunks
 
 4. **Semantic search** — the optional `sessfind-semantic` plugin generates vector embeddings (multilingual-e5-small model, 384 dimensions) for each chunk and stores them in a local sqlite-vec database. Queries are embedded and compared via cosine similarity.
 
-5. **Resume** — selecting a session and pressing Enter replaces the current process (`exec()`) with the appropriate tool's resume command.
+5. **LLM search** — sessfind detects installed AI CLI tools (`claude`, `opencode`, `copilot`) and can use them for intelligent re-ranking. First, FTS returns ~100 candidates, then the selected LLM re-ranks them by relevance. The LLM is invoked in headless mode (e.g., `claude -p --no-session-persistence`).
+
+6. **Resume** — selecting a session and pressing Enter replaces the current process (`exec()`) with the appropriate tool's resume command.
 
 ### Data Storage
 
@@ -194,6 +227,9 @@ sessfind dump-chunks
 ├── index/          # tantivy search index
 ├── state.db        # SQLite tracking indexed sessions
 └── semantic.db     # sqlite-vec embeddings (if plugin installed)
+
+~/.config/sessfind/
+└── config.json     # LLM model overrides (optional)
 ```
 
 ### Project Structure

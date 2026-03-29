@@ -1,37 +1,36 @@
 use std::collections::HashSet;
 
 use crate::indexer::engine::{IndexEngine, SearchParams};
+use crate::llm::{self, LlmBackend};
 use crate::models::{SearchResult, Source};
 use crate::semantic;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum SearchMode {
     Fts,
     Fuzzy,
     Semantic,
+    Llm(LlmBackend),
 }
 
 impl SearchMode {
-    pub fn label(&self) -> &'static str {
+    pub fn label(&self) -> String {
         match self {
-            SearchMode::Fts => "Full-Text Search",
-            SearchMode::Fuzzy => "Fuzzy",
-            SearchMode::Semantic => "Semantic",
+            SearchMode::Fts => "Full-Text Search".into(),
+            SearchMode::Fuzzy => "Fuzzy".into(),
+            SearchMode::Semantic => "Semantic".into(),
+            SearchMode::Llm(backend) => {
+                format!("LLM ({})", backend.display())
+            }
         }
     }
 
-    pub fn next(&self, semantic_available: bool) -> Self {
-        match self {
-            SearchMode::Fts => SearchMode::Fuzzy,
-            SearchMode::Fuzzy => {
-                if semantic_available {
-                    SearchMode::Semantic
-                } else {
-                    SearchMode::Fts
-                }
-            }
-            SearchMode::Semantic => SearchMode::Fts,
-        }
+    pub fn is_llm(&self) -> bool {
+        matches!(self, SearchMode::Llm(_))
+    }
+
+    pub fn is_deferred(&self) -> bool {
+        matches!(self, SearchMode::Semantic | SearchMode::Llm(_))
     }
 }
 
@@ -48,9 +47,10 @@ pub struct App<'a> {
     pub selected: usize,
     pub detail_chunks: Vec<SearchResult>,
     pub detail_scroll: usize,
-    pub search_mode: SearchMode,
-    pub semantic_available: bool,
+    pub available_modes: Vec<SearchMode>,
+    pub mode_index: usize,
     pub semantic_searching: bool,
+    pub llm_searching: bool,
     pub focus: Focus,
     pub should_quit: bool,
     pub resume_session: Option<(String, Source, String)>, // (session_id, source, project)
@@ -58,12 +58,22 @@ pub struct App<'a> {
     engine: &'a IndexEngine,
     all_chunks: Vec<SearchResult>,
     cached_session_id: Option<String>,
+    /// FTS candidates stored for LLM re-ranking
+    llm_candidates: Vec<SearchResult>,
 }
 
 impl<'a> App<'a> {
     pub fn new(engine: &'a IndexEngine) -> anyhow::Result<Self> {
         let all_chunks = engine.list_all_chunks()?;
-        let semantic_available = semantic::is_available();
+
+        // Build available modes: FTS, Fuzzy, [Semantic], [LLM backends]
+        let mut available_modes: Vec<SearchMode> = vec![SearchMode::Fts, SearchMode::Fuzzy];
+        if semantic::is_available() {
+            available_modes.push(SearchMode::Semantic);
+        }
+        for backend in llm::detect_backends() {
+            available_modes.push(SearchMode::Llm(backend));
+        }
 
         // Show all sessions initially (deduplicated)
         let results = dedup_by_session(&all_chunks);
@@ -75,9 +85,10 @@ impl<'a> App<'a> {
             selected: 0,
             detail_chunks: Vec::new(),
             detail_scroll: 0,
-            search_mode: SearchMode::Fts,
-            semantic_available,
+            available_modes,
+            mode_index: 0,
             semantic_searching: false,
+            llm_searching: false,
             focus: Focus::Search,
             should_quit: false,
             resume_session: None,
@@ -85,10 +96,15 @@ impl<'a> App<'a> {
             engine,
             all_chunks,
             cached_session_id: None,
+            llm_candidates: Vec::new(),
         };
 
         app.load_detail();
         Ok(app)
+    }
+
+    pub fn search_mode(&self) -> &SearchMode {
+        &self.available_modes[self.mode_index]
     }
 
     pub fn on_input_changed(&mut self) {
@@ -98,11 +114,11 @@ impl<'a> App<'a> {
         if self.input.is_empty() {
             self.results = dedup_by_session(&self.all_chunks);
         } else {
-            match self.search_mode {
+            match self.search_mode().clone() {
                 SearchMode::Fts => self.search_fts(),
                 SearchMode::Fuzzy => self.search_fuzzy(),
-                // Semantic: don't search on every keystroke (debounced via Enter)
-                SearchMode::Semantic => {}
+                // Deferred modes: don't search on every keystroke (triggered via Enter)
+                SearchMode::Semantic | SearchMode::Llm(_) => {}
             }
         }
 
@@ -138,6 +154,77 @@ impl<'a> App<'a> {
         match semantic::search(&params) {
             Ok(results) => self.results = dedup_by_session(&results),
             Err(_) => self.results.clear(),
+        }
+
+        self.selected = 0;
+        self.detail_scroll = 0;
+        self.load_detail();
+    }
+
+    /// Mark that LLM search should be triggered on next tick.
+    pub fn request_llm_search(&mut self) {
+        if self.input.is_empty() {
+            self.results = dedup_by_session(&self.all_chunks);
+            self.load_detail();
+            return;
+        }
+
+        // First, run FTS to get candidates for re-ranking
+        let params = SearchParams {
+            query: self.input.clone(),
+            limit: 100,
+            source: None,
+            project: None,
+            after: None,
+            before: None,
+        };
+
+        match self.engine.search(&params) {
+            Ok(results) => {
+                self.llm_candidates = dedup_by_session(&results);
+                self.llm_searching = true;
+            }
+            Err(_) => {
+                self.results.clear();
+                self.load_detail();
+            }
+        }
+    }
+
+    /// Actually run the LLM search (called from event loop after UI redraw).
+    pub fn run_pending_llm_search(&mut self) {
+        if !self.llm_searching {
+            return;
+        }
+        self.llm_searching = false;
+
+        let backend = match self.search_mode().clone() {
+            SearchMode::Llm(b) => b,
+            _ => return,
+        };
+
+        if self.llm_candidates.is_empty() {
+            self.results.clear();
+            self.load_detail();
+            return;
+        }
+
+        let prompt = llm::build_rerank_prompt(&self.input, &self.llm_candidates);
+
+        match llm::search(&backend, &prompt) {
+            Ok(response) => {
+                let reranked = llm::parse_rerank_response(&response, &self.llm_candidates);
+                if reranked.is_empty() {
+                    // Fallback: show FTS candidates if LLM response unparseable
+                    self.results = self.llm_candidates.clone();
+                } else {
+                    self.results = reranked;
+                }
+            }
+            Err(_) => {
+                // On error, fall back to FTS candidates
+                self.results = self.llm_candidates.clone();
+            }
         }
 
         self.selected = 0;
@@ -229,7 +316,7 @@ impl<'a> App<'a> {
     }
 
     pub fn toggle_mode(&mut self) {
-        self.search_mode = self.search_mode.next(self.semantic_available);
+        self.mode_index = (self.mode_index + 1) % self.available_modes.len();
         self.on_input_changed();
     }
 
@@ -286,23 +373,18 @@ mod tests {
     use chrono::Utc;
 
     #[test]
-    fn search_mode_next_without_semantic() {
-        assert_eq!(SearchMode::Fts.next(false), SearchMode::Fuzzy);
-        assert_eq!(SearchMode::Fuzzy.next(false), SearchMode::Fts);
-    }
-
-    #[test]
-    fn search_mode_next_with_semantic() {
-        assert_eq!(SearchMode::Fts.next(true), SearchMode::Fuzzy);
-        assert_eq!(SearchMode::Fuzzy.next(true), SearchMode::Semantic);
-        assert_eq!(SearchMode::Semantic.next(true), SearchMode::Fts);
-    }
-
-    #[test]
     fn search_mode_labels() {
         assert_eq!(SearchMode::Fts.label(), "Full-Text Search");
         assert_eq!(SearchMode::Fuzzy.label(), "Fuzzy");
-        assert_eq!(SearchMode::Semantic.label(), "Semantic");
+
+        // Without model override
+        let backend = test_backend("claude");
+        assert_eq!(SearchMode::Llm(backend).label(), "LLM (claude)");
+
+        // With model override
+        let mut backend = test_backend("claude");
+        backend.model = Some("sonnet".into());
+        assert_eq!(SearchMode::Llm(backend).label(), "LLM (claude:sonnet)");
     }
 
     #[test]
@@ -351,5 +433,36 @@ mod tests {
     fn dedup_empty() {
         let deduped = dedup_by_session(&[]);
         assert!(deduped.is_empty());
+    }
+
+    fn test_backend(name: &str) -> LlmBackend {
+        LlmBackend {
+            name: name.into(),
+            binary: std::path::PathBuf::from("/usr/bin/test"),
+            headless_args: vec!["-p"],
+            model_flag: "--model",
+            model: None,
+        }
+    }
+
+    #[test]
+    fn search_mode_is_deferred() {
+        assert!(!SearchMode::Fts.is_deferred());
+        assert!(!SearchMode::Fuzzy.is_deferred());
+        assert!(SearchMode::Semantic.is_deferred());
+        assert!(SearchMode::Llm(test_backend("claude")).is_deferred());
+    }
+
+    #[test]
+    fn search_mode_is_llm() {
+        assert!(!SearchMode::Fts.is_llm());
+        assert!(!SearchMode::Fuzzy.is_llm());
+        assert!(!SearchMode::Semantic.is_llm());
+        assert!(SearchMode::Llm(test_backend("claude")).is_llm());
+    }
+
+    #[test]
+    fn search_mode_semantic_label() {
+        assert_eq!(SearchMode::Semantic.label(), "Semantic");
     }
 }

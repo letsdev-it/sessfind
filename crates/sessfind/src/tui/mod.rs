@@ -31,9 +31,13 @@ pub fn run(engine: &IndexEngine) -> Result<Option<ResumeCommand>> {
     loop {
         terminal.draw(|f| ui::draw(f, &app))?;
 
-        // If semantic search was requested, run it now (after UI redraw showed "Searching...")
+        // If deferred search was requested, run it now (after UI redraw showed "Searching...")
         if app.semantic_searching {
             app.run_pending_semantic_search();
+            continue;
+        }
+        if app.llm_searching {
+            app.run_pending_llm_search();
             continue;
         }
 

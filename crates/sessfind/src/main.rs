@@ -1,5 +1,6 @@
 mod config;
 mod indexer;
+mod llm;
 mod models;
 mod search;
 pub mod semantic;
@@ -60,7 +61,7 @@ enum Commands {
         /// Max results
         #[arg(long, short = 'n', default_value = "10")]
         limit: usize,
-        /// Search method (fts, fuzzy, semantic)
+        /// Search method (fts, fuzzy, semantic, llm)
         #[arg(long, short = 'm', default_value = "fts")]
         method: String,
     },
@@ -73,6 +74,20 @@ enum Commands {
     Stats,
     /// Dump all indexed chunks as JSONL (for plugins)
     DumpChunks,
+    /// Set LLM model override for a provider
+    #[command(name = "llm-model-set")]
+    LlmModelSet {
+        /// Provider name (claude, opencode, copilot)
+        provider: String,
+        /// Model identifier (e.g. sonnet, anthropic/claude-sonnet-4-6)
+        model: String,
+    },
+    /// Remove LLM model override (use provider's default)
+    #[command(name = "llm-model-unset")]
+    LlmModelUnset {
+        /// Provider name (claude, opencode, copilot)
+        provider: String,
+    },
 }
 
 fn get_sources(filter: &str) -> Vec<Box<dyn SessionSource>> {
@@ -164,7 +179,7 @@ fn main() -> Result<()> {
             let before_dt = before.as_deref().map(parse_date).transpose()?;
 
             let params = SearchParams {
-                query,
+                query: query.clone(),
                 limit,
                 source,
                 project,
@@ -172,17 +187,51 @@ fn main() -> Result<()> {
                 before: before_dt,
             };
 
-            let results = match method.as_str() {
-                "semantic" => {
-                    if !semantic::is_available() {
-                        eprintln!("Semantic search plugin not installed.");
-                        eprintln!("Install with: cargo install sessfind-semantic");
-                        return Ok(());
-                    }
-                    semantic::search(&params)?
+            let results = if method == "semantic" {
+                if !semantic::is_available() {
+                    eprintln!("Semantic search plugin not installed.");
+                    eprintln!("Install with: cargo install sessfind-semantic");
+                    return Ok(());
                 }
-                _ => engine.search(&params)?,
+                semantic::search(&params)?
+            } else if method == "llm" {
+                let backends = llm::detect_backends();
+                if backends.is_empty() {
+                    eprintln!("No LLM CLI tools detected (claude, opencode, copilot).");
+                    return Ok(());
+                }
+                // Use first available backend
+                let backend = &backends[0];
+                eprintln!("Searching with LLM ({})...", backend.display());
+
+                // FTS candidates first
+                let candidates = engine.search(&SearchParams {
+                    query: query.clone(),
+                    limit: 100,
+                    source: None,
+                    project: None,
+                    after: after_dt,
+                    before: before_dt,
+                })?;
+
+                if candidates.is_empty() {
+                    eprintln!("No FTS candidates found to re-rank.");
+                    return Ok(());
+                }
+
+                let prompt = llm::build_rerank_prompt(&query, &candidates);
+                let response = llm::search(backend, &prompt)?;
+                let reranked = llm::parse_rerank_response(&response, &candidates);
+                if reranked.is_empty() {
+                    eprintln!("LLM returned no valid results, falling back to FTS.");
+                    candidates
+                } else {
+                    reranked
+                }
+            } else {
+                engine.search(&params)?
             };
+
             if results.is_empty() {
                 println!("No results found.");
                 return Ok(());
@@ -194,7 +243,7 @@ fn main() -> Result<()> {
             );
             println!("\x1b[90m{}\x1b[0m", "-".repeat(100));
 
-            for r in &results {
+            for r in results.iter().take(limit) {
                 let date = r.timestamp.format("%Y-%m-%d");
                 let project = truncate_project(&r.project, 28);
                 let snippet = r.snippet.replace('\n', " ");
@@ -307,10 +356,55 @@ fn main() -> Result<()> {
                 println!();
             }
 
+            // LLM backends
+            let backends = llm::detect_backends();
+            if backends.is_empty() {
+                println!(
+                    "\x1b[90mLLM search: no CLI tools detected (install claude, opencode, or copilot)\x1b[0m"
+                );
+            } else {
+                println!("\x1b[1mLLM search backends:\x1b[0m");
+                for b in &backends {
+                    let model_info = match &b.model {
+                        Some(m) => format!("model: {m}"),
+                        None => "model: (tool default)".into(),
+                    };
+                    println!("  \x1b[33m{:<10}\x1b[0m {model_info}", b.name);
+                }
+                println!(
+                    "\x1b[90m  Config: {}\x1b[0m",
+                    crate::config::config_path().display()
+                );
+            }
+            println!();
+
             println!(
                 "\x1b[90mIndex location: {}\x1b[0m",
                 config::data_dir().display()
             );
+        }
+        Commands::LlmModelSet { provider, model } => {
+            let valid = ["claude", "opencode", "copilot"];
+            if !valid.contains(&provider.as_str()) {
+                eprintln!(
+                    "Unknown provider: {provider}. Available: {}",
+                    valid.join(", ")
+                );
+                return Ok(());
+            }
+            let mut cfg = config::Config::load();
+            cfg.llm_models.insert(provider.clone(), model.clone());
+            cfg.save()?;
+            println!("Set {provider} model to: {model}");
+        }
+        Commands::LlmModelUnset { provider } => {
+            let mut cfg = config::Config::load();
+            if cfg.llm_models.remove(&provider).is_some() {
+                cfg.save()?;
+                println!("Removed model override for {provider} (will use tool default)");
+            } else {
+                println!("No model override set for {provider}");
+            }
         }
     }
 
