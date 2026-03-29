@@ -84,6 +84,13 @@ pub fn cursor_projects_dir() -> PathBuf {
         .join("projects")
 }
 
+pub fn codex_sessions_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".codex")
+        .join("sessions")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

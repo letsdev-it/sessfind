@@ -2946,7 +2946,7 @@ dependencies = [
 
 [[package]]
 name = "sessfind"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2974,7 +2974,7 @@ dependencies = [
 
 [[package]]
 name = "sessfind-common"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "dirs",
@@ -2984,7 +2984,7 @@ dependencies = [
 
 [[package]]
 name = "sessfind-semantic"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",

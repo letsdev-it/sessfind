@@ -1,7 +1,7 @@
 ---
 name: sessfind
 description: >-
-  Search, browse, and resume past AI coding sessions across GitHub Copilot, Claude Code, OpenCode, and Cursor
+  Search, browse, and resume past AI coding sessions across GitHub Copilot, Claude Code, OpenCode, Cursor, and Codex
   using the sessfind CLI. Use this skill whenever the user wants to find a previous conversation,
   search through session history, resume or continue an old session, check what was discussed before,
   look up past AI interactions, see session statistics, or re-index their sessions. Also use it when
