@@ -123,7 +123,68 @@ fn extract_text_from_content(content: &serde_json::Value) -> (String, Vec<String
         _ => {}
     }
 
-    (texts.join("\n"), tool_names)
+    let raw = texts.join("\n");
+    (clean_message_text(&raw), tool_names)
+}
+
+/// Strip internal XML tags and meta content from Claude Code messages.
+fn clean_message_text(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut remaining = text;
+
+    while let Some(start) = remaining.find('<') {
+        // Add text before the tag
+        result.push_str(&remaining[..start]);
+
+        if let Some(end) = remaining[start..].find('>') {
+            let tag_content = &remaining[start + 1..start + end];
+            let tag_name = tag_content
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_start_matches('/');
+
+            // Skip known internal tags and their content
+            match tag_name {
+                "local-command-caveat" | "local-command-stdout"
+                | "command-name" | "command-message" | "command-args"
+                | "system-reminder" | "user-prompt-submit-hook"
+                | "antml:thinking" => {
+                    // Find closing tag and skip everything
+                    let close_tag = format!("</{tag_name}>");
+                    if let Some(close_pos) = remaining.find(&close_tag) {
+                        remaining = &remaining[close_pos + close_tag.len()..];
+                    } else {
+                        remaining = &remaining[start + end + 1..];
+                    }
+                    continue;
+                }
+                _ => {
+                    // Unknown tag — keep as-is
+                    result.push_str(&remaining[start..start + end + 1]);
+                    remaining = &remaining[start + end + 1..];
+                    continue;
+                }
+            }
+        } else {
+            // No closing '>' — keep the rest
+            result.push_str(&remaining[start..]);
+            break;
+        }
+    }
+    result.push_str(remaining);
+
+    // Clean up common meta lines
+    result
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !trimmed.is_empty()
+                && !trimmed.starts_with("[Request interrupted by user")
+                && !trimmed.starts_with("[Response interrupted by")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn find_session_files(projects_dir: &Path) -> Vec<PathBuf> {

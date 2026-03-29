@@ -7,6 +7,8 @@ use std::collections::HashSet;
 use std::path::Path;
 
 const EMBEDDING_DIM: usize = 384;
+/// Minimum cosine similarity to include in results
+const MIN_SIMILARITY: f32 = 0.35;
 
 pub struct SemanticStore {
     conn: Connection,
@@ -38,15 +40,16 @@ impl SemanticStore {
                 project TEXT NOT NULL,
                 timestamp INTEGER NOT NULL,
                 title TEXT,
-                snippet TEXT NOT NULL
+                snippet TEXT NOT NULL,
+                text_len INTEGER NOT NULL DEFAULT 0
             );",
         )?;
 
-        // Create vec0 virtual table for embeddings
+        // Create vec0 virtual table for embeddings with cosine distance
         conn.execute_batch(&format!(
             "CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
                 chunk_id TEXT PRIMARY KEY,
-                embedding float[{EMBEDDING_DIM}]
+                embedding float[{EMBEDDING_DIM}] distance_metric=cosine
             );"
         ))?;
 
@@ -78,8 +81,8 @@ impl SemanticStore {
         let ts = chunk.timestamp.timestamp();
 
         self.conn.execute(
-            "INSERT OR REPLACE INTO chunk_meta (chunk_id, session_id, source, project, timestamp, title, snippet)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT OR REPLACE INTO chunk_meta (chunk_id, session_id, source, project, timestamp, title, snippet, text_len)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![
                 chunk.chunk_id,
                 chunk.session_id,
@@ -88,6 +91,7 @@ impl SemanticStore {
                 ts,
                 chunk.title,
                 snippet,
+                chunk.text.len() as i64,
             ],
         )?;
 
@@ -155,7 +159,8 @@ impl SemanticStore {
                 m.project,
                 m.timestamp,
                 m.title,
-                m.snippet
+                m.snippet,
+                m.text_len
             FROM vec_chunks v
             JOIN chunk_meta m ON v.chunk_id = m.chunk_id
             WHERE v.embedding MATCH ?1
@@ -173,6 +178,7 @@ impl SemanticStore {
                 timestamp: row.get(5)?,
                 title: row.get(6)?,
                 snippet: row.get(7)?,
+                text_len: row.get(8)?,
             })
         })?;
 
@@ -212,8 +218,22 @@ impl SemanticStore {
             }
 
             let timestamp = Utc.timestamp_opt(row.timestamp, 0).unwrap();
-            // Convert distance to similarity score (1 - distance for cosine)
-            let score = 1.0 - row.distance;
+            // Convert cosine distance to similarity score (1 - distance)
+            let raw_score = 1.0 - row.distance;
+
+            // Penalize short chunks — they produce inflated cosine similarity.
+            // Chunks under 1000 chars get linearly penalized down to 0.7x at 0 chars.
+            let length_factor = if row.text_len < 1000 {
+                0.7 + 0.3 * (row.text_len as f32 / 1000.0)
+            } else {
+                1.0
+            };
+            let score = raw_score * length_factor;
+
+            // Skip results below similarity threshold
+            if score < MIN_SIMILARITY {
+                continue;
+            }
 
             results.push(SearchResult {
                 chunk_id: row.chunk_id,
@@ -225,11 +245,11 @@ impl SemanticStore {
                 snippet: row.snippet,
                 score,
             });
-
-            if results.len() >= limit {
-                break;
-            }
         }
+
+        // Re-sort by adjusted score (length penalty may reorder results)
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(limit);
 
         Ok(results)
     }
@@ -251,6 +271,7 @@ struct RawRow {
     timestamp: i64,
     title: Option<String>,
     snippet: String,
+    text_len: i64,
 }
 
 #[cfg(test)]

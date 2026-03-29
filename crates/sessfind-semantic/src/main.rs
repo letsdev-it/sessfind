@@ -116,6 +116,10 @@ fn cmd_index(force: bool) -> Result<()> {
         if !force && store.is_chunk_indexed(&chunk.chunk_id) {
             continue;
         }
+        // Skip low-content chunks (mostly XML tags, slash commands, etc.)
+        if meaningful_text_len(&chunk.text) < 100 {
+            continue;
+        }
         chunks.push(chunk);
     }
 
@@ -128,7 +132,28 @@ fn cmd_index(force: bool) -> Result<()> {
     let batch_size = 64;
     let total = chunks.len();
     for (i, batch) in chunks.chunks(batch_size).enumerate() {
-        let texts: Vec<String> = batch.iter().map(|c| c.text.clone()).collect();
+        let texts: Vec<String> = batch
+            .iter()
+            .map(|c| {
+                let mut enriched = String::new();
+                // Add project name for context
+                if let Some(name) = c.project.rsplit('/').next() {
+                    if !name.is_empty() {
+                        enriched.push_str("Project: ");
+                        enriched.push_str(name);
+                        enriched.push('\n');
+                    }
+                }
+                // Add title for context
+                if let Some(ref title) = c.title {
+                    enriched.push_str("Title: ");
+                    enriched.push_str(title);
+                    enriched.push('\n');
+                }
+                enriched.push_str(&c.text);
+                enriched
+            })
+            .collect();
         let embeddings = embedder.embed_passages(&texts)?;
 
         for (chunk, embedding) in batch.iter().zip(embeddings.iter()) {
@@ -214,4 +239,28 @@ fn cmd_status() -> Result<()> {
 
     println!("{}", serde_json::to_string(&status)?);
     Ok(())
+}
+
+/// Count chars remaining after stripping XML/HTML tags and common meta prefixes.
+fn meaningful_text_len(text: &str) -> usize {
+    let mut clean = String::with_capacity(text.len());
+    let mut in_tag = false;
+    for ch in text.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                continue;
+            }
+            _ if in_tag => continue,
+            _ => clean.push(ch),
+        }
+    }
+    // Strip "USER: " / "ASSISTANT: " prefixes and whitespace
+    clean
+        .replace("USER:", "")
+        .replace("ASSISTANT:", "")
+        .split_whitespace()
+        .map(|w| w.len())
+        .sum()
 }
