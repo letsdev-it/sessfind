@@ -1,7 +1,9 @@
 use anyhow::Result;
 use std::path::Path;
 use tantivy::collector::TopDocs;
-use tantivy::query::{AllQuery, BooleanQuery, EmptyQuery, Occur, Query, QueryParser, RegexQuery};
+use tantivy::query::{
+    AllQuery, BooleanQuery, EmptyQuery, Occur, PhrasePrefixQuery, Query, QueryParser,
+};
 use tantivy::schema::*;
 use tantivy::tokenizer::{LowerCaser, RemoveLongFilter, SimpleTokenizer, Stemmer, TextAnalyzer};
 use tantivy::{DateTime as TantivyDateTime, Index, IndexWriter};
@@ -542,166 +544,51 @@ impl IndexEngine {
     }
 }
 
-/// Use simple OR-of-tokens parsing (supports trailing `*` per token). Full tantivy grammar when
-/// boolean / field / grouping syntax is present.
-fn should_use_simple_or_split(query: &str) -> bool {
-    let upper = query.to_ascii_uppercase();
-    if upper.contains(" AND ") || upper.contains(" OR ") || upper.contains(" NOT ") {
-        return false;
-    }
-    if query.contains('(') || query.contains(')') {
-        return false;
-    }
-    if query.contains(':') {
-        return false;
-    }
-    true
-}
-
-/// Split on ASCII whitespace outside of `"` / `'`, honoring backslash escapes inside quotes.
-fn split_fts_tokens_outside_quotes(query: &str) -> Vec<String> {
-    let mut parts = Vec::new();
-    let mut buf = String::new();
-    let mut in_dq = false;
-    let mut in_sq = false;
-    let mut escape = false;
-
-    for c in query.chars() {
-        if escape {
-            buf.push(c);
-            escape = false;
-            continue;
-        }
-        if (in_dq || in_sq) && c == '\\' {
-            escape = true;
-            buf.push(c);
-            continue;
-        }
-        match c {
-            '"' if !in_sq => {
-                in_dq = !in_dq;
-                buf.push(c);
-            }
-            '\'' if !in_dq => {
-                in_sq = !in_sq;
-                buf.push(c);
-            }
-            c if c.is_whitespace() && !in_dq && !in_sq => {
-                if !buf.is_empty() {
-                    parts.push(std::mem::take(&mut buf));
-                }
-            }
-            _ => buf.push(c),
-        }
-    }
-    if !buf.is_empty() {
-        parts.push(buf);
-    }
-    parts
-}
-
-fn strip_leading_occur(s: &str) -> (Occur, &str) {
-    let s = s.trim_start();
-    if let Some(rest) = s.strip_prefix('+') {
-        (Occur::Must, rest.trim_start())
-    } else if let Some(rest) = s.strip_prefix('-') {
-        (Occur::MustNot, rest.trim_start())
-    } else {
-        (Occur::Should, s)
-    }
-}
-
-fn is_unquoted_trailing_star_token(s: &str) -> bool {
-    let t = s.trim();
-    if t.is_empty() {
-        return false;
-    }
-    if t.starts_with('"') || t.starts_with('\'') {
-        return false;
-    }
-    t.ends_with('*') && !t[..t.len() - 1].contains('*')
-}
-
-fn escape_fst_regex_literal(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 8);
-    for c in s.chars() {
-        match c {
-            '\\' | '.' | '^' | '$' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' => {
-                out.push('\\');
-                out.push(c);
-            }
-            c => out.push(c),
-        }
-    }
-    out
-}
-
-fn clause_string_for_parser(occur: Occur, body: &str) -> String {
-    match occur {
-        Occur::Must => format!("+{body}"),
-        Occur::MustNot => format!("-{body}"),
-        Occur::Should => body.to_string(),
-    }
-}
-
-/// Build tantivy query; `token*` (suffix `*` only) becomes a regex prefix match on indexed terms.
+/// Build a tantivy query from user input.
+///
+/// Handles prefix wildcards (`hel*`) via RegexQuery, boolean operators
+/// (`+must -exclude`), exact phrases (`"hello world"`), and plain terms.
+/// The stemming tokenizer is applied to non-wildcard terms by the QueryParser.
 fn parse_fts_user_query(index: &Index, text_field: Field, query: &str) -> Result<Box<dyn Query>> {
     let query = query.trim();
-    let query_parser = QueryParser::for_index(index, vec![text_field]);
-
     if query.is_empty() {
         return Ok(Box::new(EmptyQuery));
     }
 
-    if !should_use_simple_or_split(query) {
-        return Ok(Box::new(query_parser.parse_query(query)?));
+    // Detect any trailing-* tokens that need custom prefix handling.
+    let tokens: Vec<&str> = query.split_whitespace().collect();
+    let has_star = tokens.iter().any(|t| {
+        let t = t.trim_start_matches(['+', '-']);
+        t.ends_with('*') && t.len() > 1 && !t.starts_with('"')
+    });
+
+    if !has_star {
+        let qp = QueryParser::for_index(index, vec![text_field]);
+        return Ok(Box::new(qp.parse_query(query)?));
     }
 
-    let tokens = split_fts_tokens_outside_quotes(query);
-    if tokens.is_empty() {
-        return Ok(Box::new(EmptyQuery));
-    }
+    // Build boolean query mixing prefix regexes with normal terms.
+    let qp = QueryParser::for_index(index, vec![text_field]);
+    let mut subs: Vec<(Occur, Box<dyn Query>)> = Vec::new();
 
-    let mut any_star = false;
-    for t in &tokens {
-        let (_, body) = strip_leading_occur(t);
-        if is_unquoted_trailing_star_token(body) {
-            any_star = true;
-            break;
-        }
-    }
+    for raw in &tokens {
+        let (occur, body) = if let Some(rest) = raw.strip_prefix('+') {
+            (Occur::Must, rest)
+        } else if let Some(rest) = raw.strip_prefix('-') {
+            (Occur::MustNot, rest)
+        } else {
+            (Occur::Should, *raw)
+        };
 
-    if !any_star {
-        return Ok(Box::new(query_parser.parse_query(query)?));
-    }
-
-    let mut subs: Vec<(Occur, Box<dyn Query>)> = Vec::with_capacity(tokens.len());
-    for raw in tokens {
-        let (occur, body) = strip_leading_occur(&raw);
-        let body = body.trim();
-        if body.is_empty() {
-            continue;
-        }
-
-        if is_unquoted_trailing_star_token(body) {
-            let sub: Box<dyn Query> = {
-                let base = &body[..body.len() - 1];
-                if base.is_empty() {
-                    Box::new(AllQuery)
-                } else {
-                    let pat = format!("^{}.*", escape_fst_regex_literal(&base.to_lowercase()));
-                    Box::new(
-                        RegexQuery::from_pattern(&pat, text_field)
-                            .map_err(|e| anyhow::anyhow!("regex query: {e}"))?,
-                    )
-                }
-            };
+        if body.ends_with('*') && body.len() > 1 && !body.starts_with('"') {
+            let base = &body[..body.len() - 1];
+            let lower = base.to_lowercase();
+            let term = tantivy::Term::from_field_text(text_field, &lower);
+            let sub: Box<dyn Query> = Box::new(PhrasePrefixQuery::new(vec![term]));
             subs.push((occur, sub));
         } else {
-            let sub = query_parser
-                .parse_query(&clause_string_for_parser(occur, body))
-                .map_err(|e| anyhow::anyhow!(e))?;
-            subs.push((Occur::Should, sub));
+            let sub = qp.parse_query(body).map_err(|e| anyhow::anyhow!(e))?;
+            subs.push((occur, Box::new(sub)));
         }
     }
 
@@ -721,12 +608,8 @@ fn make_snippet(text: &str, query: &str, max_len: usize) -> String {
         .split_whitespace()
         .map(|t| {
             let t = t.trim_start_matches(['+', '-']);
-            let t = if is_unquoted_trailing_star_token(t) {
-                t[..t.len() - 1].to_lowercase()
-            } else {
-                t.to_lowercase()
-            };
-            t.chars().collect::<Vec<_>>()
+            let t = t.strip_suffix('*').unwrap_or(t);
+            t.to_lowercase().chars().collect::<Vec<_>>()
         })
         .collect();
 
@@ -762,3 +645,59 @@ pub struct IndexStats {
 }
 
 pub use crate::models::SearchParams;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tantivy::collector::TopDocs;
+
+    fn make_test_index() -> (Index, Schema, Field) {
+        let schema = build_schema();
+        let index = Index::create_in_ram(schema.clone());
+        register_tokenizer(&index);
+        let text_field = schema.get_field("text").unwrap();
+
+        let mut writer = index.writer(15_000_000).unwrap();
+        let chunk_id = schema.get_field("chunk_id").unwrap();
+        let session_id = schema.get_field("session_id").unwrap();
+        let source = schema.get_field("source").unwrap();
+        let project = schema.get_field("project").unwrap();
+        let timestamp = schema.get_field("timestamp").unwrap();
+        let title = schema.get_field("title").unwrap();
+
+        let mut doc = tantivy::TantivyDocument::new();
+        doc.add_text(chunk_id, "c1");
+        doc.add_text(session_id, "s1");
+        doc.add_text(source, "ClaudeCode");
+        doc.add_text(project, "test-project");
+        doc.add_text(text_field, "hello world running tests with helpers");
+        doc.add_date(timestamp, TantivyDateTime::from_timestamp_secs(1700000000));
+        doc.add_text(title, "");
+        writer.add_document(doc).unwrap();
+        writer.commit().unwrap();
+
+        (index, schema, text_field)
+    }
+
+    #[test]
+    fn prefix_query_matches() {
+        let (index, _, text_field) = make_test_index();
+        // "hel*" should match "hello" and "helpers"
+        let q = parse_fts_user_query(&index, text_field, "hel*").unwrap();
+        let reader = index.reader().unwrap();
+        let searcher = reader.searcher();
+        let results = searcher.search(&q, &TopDocs::with_limit(10)).unwrap();
+        assert!(!results.is_empty(), "hel* should match hello/helpers");
+    }
+
+    #[test]
+    fn stemming_matches() {
+        let (index, _, text_field) = make_test_index();
+        // "runs" should match "running" via stemmer (both stem to "run")
+        let q = parse_fts_user_query(&index, text_field, "runs").unwrap();
+        let reader = index.reader().unwrap();
+        let searcher = reader.searcher();
+        let results = searcher.search(&q, &TopDocs::with_limit(10)).unwrap();
+        assert!(!results.is_empty(), "runs should match running via stemmer");
+    }
+}
