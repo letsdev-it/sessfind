@@ -3,12 +3,16 @@ use std::path::Path;
 use tantivy::collector::TopDocs;
 use tantivy::query::{AllQuery, BooleanQuery, EmptyQuery, Occur, Query, QueryParser, RegexQuery};
 use tantivy::schema::*;
+use tantivy::tokenizer::{LowerCaser, RemoveLongFilter, SimpleTokenizer, Stemmer, TextAnalyzer};
 use tantivy::{DateTime as TantivyDateTime, Index, IndexWriter};
 
 use crate::indexer::chunker;
 use crate::indexer::state::IndexState;
 use crate::models::{Chunk, SearchResult, Session, Source};
 use crate::sources::SessionSource;
+
+/// Custom tokenizer name used for the `text` field (simple + lowercase + stemmer).
+const TOKENIZER_NAME: &str = "en_stem";
 
 pub struct IndexEngine {
     index: Index,
@@ -22,10 +26,29 @@ fn build_schema() -> Schema {
     builder.add_text_field("session_id", STRING | STORED);
     builder.add_text_field("source", STRING | STORED);
     builder.add_text_field("project", STRING | STORED);
-    builder.add_text_field("text", TEXT | STORED);
+
+    let text_options = TextOptions::default()
+        .set_indexing_options(
+            TextFieldIndexing::default()
+                .set_tokenizer(TOKENIZER_NAME)
+                .set_index_option(IndexRecordOption::WithFreqsAndPositions),
+        )
+        .set_stored();
+    builder.add_text_field("text", text_options);
+
     builder.add_date_field("timestamp", INDEXED | STORED | FAST);
     builder.add_text_field("title", STRING | STORED);
     builder.build()
+}
+
+/// Register the stemming tokenizer on the index so both indexing and querying use it.
+fn register_tokenizer(index: &Index) {
+    let analyzer = TextAnalyzer::builder(SimpleTokenizer::default())
+        .filter(RemoveLongFilter::limit(40))
+        .filter(LowerCaser)
+        .filter(Stemmer::default()) // English stemmer
+        .build();
+    index.tokenizers().register(TOKENIZER_NAME, analyzer);
 }
 
 impl IndexEngine {
@@ -36,13 +59,46 @@ impl IndexEngine {
         let index_path = data_dir.join("tantivy");
         std::fs::create_dir_all(&index_path)?;
 
+        let mut rebuilt = false;
         let index = if index_path.join("meta.json").exists() {
-            Index::open_in_dir(&index_path)?
+            let existing = Index::open_in_dir(&index_path)?;
+            // Detect tokenizer change: if the existing schema's text field doesn't
+            // use our tokenizer, wipe and recreate so stemming takes effect.
+            let needs_rebuild = {
+                let s = existing.schema();
+                let ok = s.get_field("text").ok().map_or(false, |f| {
+                    if let FieldType::Str(ref opts) = *s.get_field_entry(f).field_type() {
+                        opts.get_indexing_options()
+                            .map_or(false, |o| o.tokenizer() == TOKENIZER_NAME)
+                    } else {
+                        false
+                    }
+                });
+                !ok
+            };
+            if needs_rebuild {
+                drop(existing);
+                std::fs::remove_dir_all(&index_path)?;
+                std::fs::create_dir_all(&index_path)?;
+                eprintln!("Recreating search index (tokenizer upgrade)…");
+                rebuilt = true;
+                Index::create_in_dir(&index_path, schema.clone())?
+            } else {
+                existing
+            }
         } else {
             Index::create_in_dir(&index_path, schema.clone())?
         };
 
+        register_tokenizer(&index);
+
         let state = IndexState::open(&data_dir.join("index_state.db"))?;
+
+        // If the tantivy index was wiped (tokenizer upgrade), clear state so
+        // every session is re-indexed on the next run.
+        if rebuilt {
+            state.clear()?;
+        }
 
         Ok(Self {
             index,
