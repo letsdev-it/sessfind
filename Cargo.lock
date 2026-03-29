@@ -3069,24 +3069,12 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "sessfind-common 0.1.0",
+ "sessfind-common",
  "tantivy",
  "tempfile",
  "unicode-width 0.2.0",
  "walkdir",
  "which",
-]
-
-[[package]]
-name = "sessfind-common"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b8805f0b9db36e4306104f32bad89acc0b11c9aa74e939f449780379dd83100"
-dependencies = [
- "chrono",
- "dirs",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -3110,7 +3098,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
- "sessfind-common 0.1.0",
+ "sessfind-common",
  "sqlite-vec",
  "tempfile",
  "which",
