@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.3.2...sessfind-v0.3.3) - 2026-03-29
+
+### Added
+
+- add `sessfind watch` for automatic session indexing
+
+### Fixed
+
+- resolve clippy warnings for Rust 1.94
+- bump MSRV to 1.88 and correct sessfind-common dep version
+- resolve merge conflict with main
+
+### Other
+
+- Merge pull request #27 from letsdev-it/fix/msrv-and-deps
+- add automatic indexing page to mkdocs nav
+
 ## [0.3.2](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.3.1...sessfind-v0.3.2) - 2026-03-29
 
 ### Other
