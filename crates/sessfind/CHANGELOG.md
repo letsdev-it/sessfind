@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.6.0...sessfind-v0.6.1) - 2026-03-29
+
+### Other
+
+- release
+- Merge pull request #35 from letsdev-it/release-plz-2026-03-29T22-02-14Z
+
 ## [0.6.0](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.5.0...sessfind-v0.6.0) - 2026-03-29
 
 ### Added
