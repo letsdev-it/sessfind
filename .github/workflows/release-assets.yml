@@ -1,0 +1,75 @@
+name: Release assets
+
+on:
+  release:
+    types: [published]
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  CARGO_NET_RETRY: 10
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTUP_MAX_RETRIES: 10
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  upload-release-assets:
+    name: Upload ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04
+          - target: aarch64-apple-darwin
+            os: macos-26
+          - target: x86_64-apple-darwin
+            os: macos-26-intel
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cross-compilation tools
+        uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: ${{ matrix.target }}
+        if: startsWith(matrix.os, 'ubuntu')
+
+      - name: Build and upload sessfind
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: sessfind
+          target: ${{ matrix.target }}
+          ref: refs/tags/${{ github.event.release.tag_name }}
+          tar: unix
+          locked: true
+          checksum: sha256
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and upload sessfind-semantic
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: sessfind-semantic
+          target: ${{ matrix.target }}
+          ref: refs/tags/${{ github.event.release.tag_name }}
+          tar: unix
+          locked: true
+          checksum: sha256
+          token: ${{ secrets.GITHUB_TOKEN }}
