@@ -17,13 +17,20 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    # Avoid failing forks; require registry token from repo secrets.
-    if: ${{ !github.event.repository.fork && secrets.CARGO_REGISTRY_TOKEN != '' }}
+    # `secrets` is not allowed in job-level `if` (schema / evaluation rules).
+    if: ${{ !github.event.repository.fork }}
 
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
     steps:
+      - name: Require CARGO_REGISTRY_TOKEN
+        run: |
+          if [ -z "${CARGO_REGISTRY_TOKEN}" ]; then
+            echo "::error::Set the CARGO_REGISTRY_TOKEN repository secret to publish to crates.io."
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
 
