@@ -331,6 +331,7 @@ impl<'a> App<'a> {
             Source::ClaudeCode => vec!["claude".into(), "--resume".into(), session_id.clone()],
             Source::Copilot => vec!["copilot".into(), format!("--resume={session_id}")],
             Source::OpenCode => vec!["opencode".into(), "--session".into(), session_id.clone()],
+            Source::Cursor => vec!["cursor".into(), project.clone()],
         };
         Some(ResumeCommand {
             args,

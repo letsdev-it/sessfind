@@ -73,7 +73,7 @@ fn dump_chunks_are_valid_dump_chunk_structs() {
         // Source should be valid
         assert!(matches!(
             chunk.source,
-            Source::ClaudeCode | Source::OpenCode | Source::Copilot
+            Source::ClaudeCode | Source::OpenCode | Source::Copilot | Source::Cursor
         ));
     }
 }

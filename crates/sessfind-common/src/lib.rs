@@ -25,6 +25,7 @@ pub enum Source {
     ClaudeCode,
     OpenCode,
     Copilot,
+    Cursor,
 }
 
 impl Source {
@@ -33,6 +34,7 @@ impl Source {
             Source::ClaudeCode => "claude",
             Source::OpenCode => "opencode",
             Source::Copilot => "copilot",
+            Source::Cursor => "cursor",
         }
     }
 
@@ -41,6 +43,7 @@ impl Source {
             "claude" => Some(Source::ClaudeCode),
             "opencode" => Some(Source::OpenCode),
             "copilot" => Some(Source::Copilot),
+            "cursor" => Some(Source::Cursor),
             _ => None,
         }
     }
@@ -100,6 +103,7 @@ mod tests {
         assert_eq!(Source::ClaudeCode.as_str(), "claude");
         assert_eq!(Source::OpenCode.as_str(), "opencode");
         assert_eq!(Source::Copilot.as_str(), "copilot");
+        assert_eq!(Source::Cursor.as_str(), "cursor");
     }
 
     #[test]
@@ -107,6 +111,7 @@ mod tests {
         assert_eq!(Source::parse_source("claude"), Some(Source::ClaudeCode));
         assert_eq!(Source::parse_source("opencode"), Some(Source::OpenCode));
         assert_eq!(Source::parse_source("copilot"), Some(Source::Copilot));
+        assert_eq!(Source::parse_source("cursor"), Some(Source::Cursor));
         assert_eq!(Source::parse_source("unknown"), None);
     }
 
@@ -114,6 +119,7 @@ mod tests {
     fn source_display() {
         assert_eq!(format!("{}", Source::ClaudeCode), "claude");
         assert_eq!(format!("{}", Source::Copilot), "copilot");
+        assert_eq!(format!("{}", Source::Cursor), "cursor");
     }
 
     #[test]
@@ -131,6 +137,7 @@ mod tests {
             (Source::ClaudeCode, "\"claude\""),
             (Source::OpenCode, "\"opencode\""),
             (Source::Copilot, "\"copilot\""),
+            (Source::Cursor, "\"cursor\""),
         ] {
             let json = serde_json::to_string(&variant).unwrap();
             assert_eq!(json, expected);

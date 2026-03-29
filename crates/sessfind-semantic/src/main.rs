@@ -26,7 +26,7 @@ enum Commands {
     Search {
         /// Search query
         query: String,
-        /// Filter by source (claude, opencode, copilot)
+        /// Filter by source (claude, opencode, copilot, cursor)
         #[arg(long, short = 's')]
         source: Option<String>,
         /// Filter by project name (substring match)

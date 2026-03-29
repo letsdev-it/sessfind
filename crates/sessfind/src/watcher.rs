@@ -11,6 +11,7 @@ use crate::semantic;
 use crate::sources::SessionSource;
 use crate::sources::claude_code::ClaudeCodeSource;
 use crate::sources::copilot::CopilotSource;
+use crate::sources::cursor::CursorSource;
 use crate::sources::opencode::OpenCodeSource;
 
 const DEBOUNCE_SECS: u64 = 5;
@@ -88,6 +89,7 @@ fn run_index() -> Result<usize> {
         Box::new(ClaudeCodeSource::new()),
         Box::new(OpenCodeSource::new()),
         Box::new(CopilotSource::new()),
+        Box::new(CursorSource::new()),
     ];
 
     let mut total_new = 0usize;
@@ -118,6 +120,7 @@ fn watch_dirs() -> Vec<(&'static str, PathBuf, bool)> {
                 .to_path_buf(),
             false,
         ),
+        ("cursor", config::cursor_projects_dir(), true),
     ];
 
     candidates
