@@ -189,15 +189,15 @@ impl SemanticStore {
             let row = row?;
 
             // Apply filters
-            if let Some(sf) = source_filter {
-                if row.source != sf {
-                    continue;
-                }
+            if let Some(sf) = source_filter
+                && row.source != sf
+            {
+                continue;
             }
-            if let Some(pf) = project_filter {
-                if !row.project.to_lowercase().contains(&pf.to_lowercase()) {
-                    continue;
-                }
+            if let Some(pf) = project_filter
+                && !row.project.to_lowercase().contains(&pf.to_lowercase())
+            {
+                continue;
             }
             if let Some(after_dt) = after {
                 let ts = Utc.timestamp_opt(row.timestamp, 0).unwrap();

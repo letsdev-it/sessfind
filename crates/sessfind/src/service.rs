@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result};
@@ -42,7 +42,7 @@ fn plist_path() -> PathBuf {
         .join(format!("{LABEL}.plist"))
 }
 
-fn plist_contents(bin: &PathBuf) -> String {
+fn plist_contents(bin: &Path) -> String {
     let log_path = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("Library/Logs/sessfind-watch.log");
@@ -171,7 +171,7 @@ fn unit_path() -> PathBuf {
         .join(UNIT_NAME)
 }
 
-fn unit_contents(bin: &PathBuf) -> String {
+fn unit_contents(bin: &Path) -> String {
     format!(
         r#"[Unit]
 Description=sessfind watch — automatic session indexing

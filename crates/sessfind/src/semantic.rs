@@ -11,12 +11,12 @@ fn find_plugin() -> Option<PathBuf> {
     if let Ok(path) = which::which(PLUGIN_NAME) {
         return Some(path);
     }
-    if let Ok(self_path) = std::env::current_exe() {
-        if let Some(dir) = self_path.parent() {
-            let sibling = dir.join(PLUGIN_NAME);
-            if sibling.exists() {
-                return Some(sibling);
-            }
+    if let Ok(self_path) = std::env::current_exe()
+        && let Some(dir) = self_path.parent()
+    {
+        let sibling = dir.join(PLUGIN_NAME);
+        if sibling.exists() {
+            return Some(sibling);
         }
     }
     None

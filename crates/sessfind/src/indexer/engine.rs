@@ -159,10 +159,10 @@ impl IndexEngine {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
 
-            if let Some(filter) = &params.source {
-                if source_val != filter {
-                    continue;
-                }
+            if let Some(filter) = &params.source
+                && source_val != filter
+            {
+                continue;
             }
 
             let project_val = doc
@@ -170,10 +170,10 @@ impl IndexEngine {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
 
-            if let Some(filter) = &params.project {
-                if !project_val.to_lowercase().contains(&filter.to_lowercase()) {
-                    continue;
-                }
+            if let Some(filter) = &params.project
+                && !project_val.to_lowercase().contains(&filter.to_lowercase())
+            {
+                continue;
             }
 
             let ts_val = doc
@@ -185,15 +185,15 @@ impl IndexEngine {
                 })
                 .unwrap_or_default();
 
-            if let Some(after) = params.after {
-                if ts_val < after {
-                    continue;
-                }
+            if let Some(after) = params.after
+                && ts_val < after
+            {
+                continue;
             }
-            if let Some(before) = params.before {
-                if ts_val > before {
-                    continue;
-                }
+            if let Some(before) = params.before
+                && ts_val > before
+            {
+                continue;
             }
 
             let full_text = doc.get_first(text_f).and_then(|v| v.as_str()).unwrap_or("");
