@@ -2,11 +2,13 @@ use std::collections::HashSet;
 
 use crate::indexer::engine::{IndexEngine, SearchParams};
 use crate::models::{SearchResult, Source};
+use crate::semantic;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchMode {
     Fts,
     Fuzzy,
+    Semantic,
 }
 
 impl SearchMode {
@@ -14,13 +16,21 @@ impl SearchMode {
         match self {
             SearchMode::Fts => "Full-Text Search",
             SearchMode::Fuzzy => "Fuzzy",
+            SearchMode::Semantic => "Semantic",
         }
     }
 
-    pub fn next(&self) -> Self {
+    pub fn next(&self, semantic_available: bool) -> Self {
         match self {
             SearchMode::Fts => SearchMode::Fuzzy,
-            SearchMode::Fuzzy => SearchMode::Fts,
+            SearchMode::Fuzzy => {
+                if semantic_available {
+                    SearchMode::Semantic
+                } else {
+                    SearchMode::Fts
+                }
+            }
+            SearchMode::Semantic => SearchMode::Fts,
         }
     }
 }
@@ -39,9 +49,11 @@ pub struct App<'a> {
     pub detail_chunks: Vec<SearchResult>,
     pub detail_scroll: usize,
     pub search_mode: SearchMode,
+    pub semantic_available: bool,
+    pub semantic_searching: bool,
     pub focus: Focus,
     pub should_quit: bool,
-    pub resume_session: Option<(String, Source)>,
+    pub resume_session: Option<(String, Source, String)>, // (session_id, source, project)
     pub show_help: bool,
     engine: &'a IndexEngine,
     all_chunks: Vec<SearchResult>,
@@ -51,6 +63,7 @@ pub struct App<'a> {
 impl<'a> App<'a> {
     pub fn new(engine: &'a IndexEngine) -> anyhow::Result<Self> {
         let all_chunks = engine.list_all_chunks()?;
+        let semantic_available = semantic::is_available();
 
         // Show all sessions initially (deduplicated)
         let results = dedup_by_session(&all_chunks);
@@ -63,6 +76,8 @@ impl<'a> App<'a> {
             detail_chunks: Vec::new(),
             detail_scroll: 0,
             search_mode: SearchMode::Fts,
+            semantic_available,
+            semantic_searching: false,
             focus: Focus::Search,
             should_quit: false,
             resume_session: None,
@@ -86,9 +101,47 @@ impl<'a> App<'a> {
             match self.search_mode {
                 SearchMode::Fts => self.search_fts(),
                 SearchMode::Fuzzy => self.search_fuzzy(),
+                // Semantic: don't search on every keystroke (debounced via Enter)
+                SearchMode::Semantic => {}
             }
         }
 
+        self.load_detail();
+    }
+
+    /// Mark that semantic search should be triggered on next tick.
+    pub fn request_semantic_search(&mut self) {
+        if self.input.is_empty() {
+            self.results = dedup_by_session(&self.all_chunks);
+            self.load_detail();
+            return;
+        }
+        self.semantic_searching = true;
+    }
+
+    /// Actually run the semantic search (called from event loop after UI redraw).
+    pub fn run_pending_semantic_search(&mut self) {
+        if !self.semantic_searching {
+            return;
+        }
+        self.semantic_searching = false;
+
+        let params = SearchParams {
+            query: self.input.clone(),
+            limit: 50,
+            source: None,
+            project: None,
+            after: None,
+            before: None,
+        };
+
+        match semantic::search(&params) {
+            Ok(results) => self.results = dedup_by_session(&results),
+            Err(_) => self.results.clear(),
+        }
+
+        self.selected = 0;
+        self.detail_scroll = 0;
         self.load_detail();
     }
 
@@ -176,7 +229,7 @@ impl<'a> App<'a> {
     }
 
     pub fn toggle_mode(&mut self) {
-        self.search_mode = self.search_mode.next();
+        self.search_mode = self.search_mode.next(self.semantic_available);
         self.on_input_changed();
     }
 
@@ -189,30 +242,33 @@ impl<'a> App<'a> {
 
     pub fn resume_selected(&mut self) {
         if let Some(r) = self.results.get(self.selected) {
-            self.resume_session = Some((r.session_id.clone(), r.source));
+            self.resume_session = Some((r.session_id.clone(), r.source, r.project.clone()));
             self.should_quit = true;
         }
     }
 
-    pub fn resume_command(&self) -> Option<Vec<String>> {
-        let (session_id, source) = self.resume_session.as_ref()?;
-        Some(match source {
-            Source::ClaudeCode => vec![
-                "claude".into(),
-                "--resume".into(),
-                session_id.clone(),
-            ],
-            Source::Copilot => vec![
-                "copilot".into(),
-                format!("--resume={session_id}"),
-            ],
-            Source::OpenCode => vec![
-                "opencode".into(),
-                "--session".into(),
-                session_id.clone(),
-            ],
+    pub fn resume_command(&self) -> Option<ResumeCommand> {
+        let (session_id, source, project) = self.resume_session.as_ref()?;
+        let args = match source {
+            Source::ClaudeCode => vec!["claude".into(), "--resume".into(), session_id.clone()],
+            Source::Copilot => vec!["copilot".into(), format!("--resume={session_id}")],
+            Source::OpenCode => vec!["opencode".into(), "--session".into(), session_id.clone()],
+        };
+        Some(ResumeCommand {
+            args,
+            cwd: if *source == Source::ClaudeCode {
+                Some(project.clone())
+            } else {
+                None
+            },
         })
     }
+}
+
+pub struct ResumeCommand {
+    pub args: Vec<String>,
+    /// Working directory to cd into before exec (needed for Claude Code).
+    pub cwd: Option<String>,
 }
 
 fn dedup_by_session(results: &[SearchResult]) -> Vec<SearchResult> {
@@ -222,4 +278,78 @@ fn dedup_by_session(results: &[SearchResult]) -> Vec<SearchResult> {
         .filter(|r| seen.insert(r.session_id.clone()))
         .cloned()
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    #[test]
+    fn search_mode_next_without_semantic() {
+        assert_eq!(SearchMode::Fts.next(false), SearchMode::Fuzzy);
+        assert_eq!(SearchMode::Fuzzy.next(false), SearchMode::Fts);
+    }
+
+    #[test]
+    fn search_mode_next_with_semantic() {
+        assert_eq!(SearchMode::Fts.next(true), SearchMode::Fuzzy);
+        assert_eq!(SearchMode::Fuzzy.next(true), SearchMode::Semantic);
+        assert_eq!(SearchMode::Semantic.next(true), SearchMode::Fts);
+    }
+
+    #[test]
+    fn search_mode_labels() {
+        assert_eq!(SearchMode::Fts.label(), "Full-Text Search");
+        assert_eq!(SearchMode::Fuzzy.label(), "Fuzzy");
+        assert_eq!(SearchMode::Semantic.label(), "Semantic");
+    }
+
+    #[test]
+    fn dedup_by_session_removes_duplicates() {
+        let ts = Utc::now();
+        let results = vec![
+            SearchResult {
+                chunk_id: "a:s1:0".into(),
+                session_id: "s1".into(),
+                source: Source::ClaudeCode,
+                project: "/p".into(),
+                timestamp: ts,
+                title: None,
+                snippet: "chunk 0".into(),
+                score: 1.0,
+            },
+            SearchResult {
+                chunk_id: "a:s1:1".into(),
+                session_id: "s1".into(),
+                source: Source::ClaudeCode,
+                project: "/p".into(),
+                timestamp: ts,
+                title: None,
+                snippet: "chunk 1".into(),
+                score: 0.9,
+            },
+            SearchResult {
+                chunk_id: "a:s2:0".into(),
+                session_id: "s2".into(),
+                source: Source::OpenCode,
+                project: "/q".into(),
+                timestamp: ts,
+                title: None,
+                snippet: "other".into(),
+                score: 0.8,
+            },
+        ];
+        let deduped = dedup_by_session(&results);
+        assert_eq!(deduped.len(), 2);
+        assert_eq!(deduped[0].session_id, "s1");
+        assert_eq!(deduped[0].chunk_id, "a:s1:0"); // keeps first
+        assert_eq!(deduped[1].session_id, "s2");
+    }
+
+    #[test]
+    fn dedup_empty() {
+        let deduped = dedup_by_session(&[]);
+        assert!(deduped.is_empty());
+    }
 }

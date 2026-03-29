@@ -2,6 +2,7 @@ mod config;
 mod indexer;
 mod models;
 mod search;
+pub mod semantic;
 mod sources;
 mod tui;
 
@@ -10,16 +11,23 @@ use chrono::{NaiveDate, TimeZone, Utc};
 use clap::{Parser, Subcommand};
 
 use crate::indexer::engine::{IndexEngine, SearchParams};
+use crate::sources::SessionSource;
 use crate::sources::claude_code::ClaudeCodeSource;
 use crate::sources::copilot::CopilotSource;
 use crate::sources::opencode::OpenCodeSource;
-use crate::sources::SessionSource;
 
 #[derive(Parser)]
-#[command(name = "sessfind", about = "Search past AI coding assistant sessions")]
+#[command(
+    name = "sessfind",
+    about = "Search past AI coding assistant sessions",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+    /// Index all sources before launching TUI
+    #[arg(long)]
+    index: bool,
 }
 
 #[derive(Subcommand)]
@@ -52,6 +60,9 @@ enum Commands {
         /// Max results
         #[arg(long, short = 'n', default_value = "10")]
         limit: usize,
+        /// Search method (fts, fuzzy, semantic)
+        #[arg(long, short = 'm', default_value = "fts")]
+        method: String,
     },
     /// Show full session content
     Show {
@@ -60,6 +71,8 @@ enum Commands {
     },
     /// Show index statistics
     Stats,
+    /// Dump all indexed chunks as JSONL (for plugins)
+    DumpChunks,
 }
 
 fn get_sources(filter: &str) -> Vec<Box<dyn SessionSource>> {
@@ -83,9 +96,7 @@ fn get_sources(filter: &str) -> Vec<Box<dyn SessionSource>> {
 fn parse_date(s: &str) -> Result<chrono::DateTime<Utc>> {
     let date = NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .map_err(|_| anyhow::anyhow!("Invalid date format: {s}. Expected YYYY-MM-DD"))?;
-    Ok(Utc.from_utc_datetime(
-        &date.and_hms_opt(0, 0, 0).unwrap(),
-    ))
+    Ok(Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0).unwrap()))
 }
 
 fn main() -> Result<()> {
@@ -96,9 +107,19 @@ fn main() -> Result<()> {
     let command = match cli.command {
         Some(cmd) => cmd,
         None => {
-            // Default: launch TUI
-            if let Some(resume_cmd) = tui::run(&engine)? {
-                exec_resume(&resume_cmd)?;
+            // Index before launching TUI if requested
+            if cli.index {
+                let sources = get_sources("all");
+                for src in &sources {
+                    let _ = engine.index_source(src.as_ref(), false);
+                }
+                if semantic::is_available() {
+                    let _ = semantic::trigger_index();
+                }
+            }
+            // Launch TUI
+            if let Some(resume) = tui::run(&engine)? {
+                exec_resume(&resume)?;
             }
             return Ok(());
         }
@@ -119,6 +140,16 @@ fn main() -> Result<()> {
                     );
                 }
             }
+
+            // Trigger semantic indexing if plugin is available
+            if semantic::is_available() {
+                eprintln!();
+                eprint!("Updating semantic index... ");
+                match semantic::trigger_index() {
+                    Ok(()) => {}
+                    Err(e) => eprintln!("warning: semantic indexing failed: {e}"),
+                }
+            }
         }
         Commands::Search {
             query,
@@ -127,6 +158,7 @@ fn main() -> Result<()> {
             after,
             before,
             limit,
+            method,
         } => {
             let after_dt = after.as_deref().map(parse_date).transpose()?;
             let before_dt = before.as_deref().map(parse_date).transpose()?;
@@ -140,17 +172,27 @@ fn main() -> Result<()> {
                 before: before_dt,
             };
 
-            let results = engine.search(&params)?;
+            let results = match method.as_str() {
+                "semantic" => {
+                    if !semantic::is_available() {
+                        eprintln!("Semantic search plugin not installed.");
+                        eprintln!("Install with: cargo install sessfind-semantic");
+                        return Ok(());
+                    }
+                    semantic::search(&params)?
+                }
+                _ => engine.search(&params)?,
+            };
             if results.is_empty() {
                 println!("No results found.");
                 return Ok(());
             }
 
             println!(
-                "\x1b[1m{:<6} {:<10} {:<30} {:<12} {}\x1b[0m",
-                "Score", "Source", "Project", "Date", "Preview"
+                "\x1b[1m{:<6} {:<10} {:<30} {:<12} Preview\x1b[0m",
+                "Score", "Source", "Project", "Date"
             );
-            println!("{}", "\x1b[90m{}\x1b[0m".replace("{}", &"-".repeat(100)));
+            println!("\x1b[90m{}\x1b[0m", "-".repeat(100));
 
             for r in &results {
                 let date = r.timestamp.format("%Y-%m-%d");
@@ -171,9 +213,7 @@ fn main() -> Result<()> {
             }
 
             println!();
-            println!(
-                "\x1b[90mUse `sessfind show <SESSION_ID>` to view full session.\x1b[0m"
-            );
+            println!("\x1b[90mUse `sessfind show <SESSION_ID>` to view full session.\x1b[0m");
             let unique_sessions: Vec<_> = {
                 let mut seen = std::collections::HashSet::new();
                 results
@@ -183,11 +223,7 @@ fn main() -> Result<()> {
                     .collect()
             };
             for r in &unique_sessions {
-                println!(
-                    "\x1b[90m  {} ({})\x1b[0m",
-                    r.session_id,
-                    r.source.as_str()
-                );
+                println!("\x1b[90m  {} ({})\x1b[0m", r.session_id, r.source.as_str());
             }
         }
         Commands::Show { session_id } => {
@@ -230,6 +266,13 @@ fn main() -> Result<()> {
                 println!();
             }
         }
+        Commands::DumpChunks => {
+            let chunks = engine.dump_all_chunks()?;
+            for chunk in &chunks {
+                let json = serde_json::to_string(chunk)?;
+                println!("{json}");
+            }
+        }
         Commands::Stats => {
             let claude = engine.session_count(Some("claude"))?;
             let opencode = engine.session_count(Some("opencode"))?;
@@ -242,6 +285,28 @@ fn main() -> Result<()> {
             println!("  \x1b[33mCopilot:\x1b[0m     {copilot}");
             println!("  Total:       {total}");
             println!();
+
+            // Semantic plugin status
+            if semantic::is_available() {
+                match semantic::status() {
+                    Ok(st) => {
+                        println!("\x1b[1mSemantic search:\x1b[0m");
+                        println!("  Model:       {}", st.model);
+                        println!("  Chunks:      {}", st.indexed_chunks);
+                        println!();
+                    }
+                    Err(e) => {
+                        println!("\x1b[1mSemantic search:\x1b[0m \x1b[33merror: {e}\x1b[0m");
+                        println!();
+                    }
+                }
+            } else {
+                println!(
+                    "\x1b[90mSemantic search: not installed (cargo install sessfind-semantic)\x1b[0m"
+                );
+                println!();
+            }
+
             println!(
                 "\x1b[90mIndex location: {}\x1b[0m",
                 config::data_dir().display()
@@ -252,13 +317,20 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn exec_resume(cmd: &[String]) -> Result<()> {
+fn exec_resume(resume: &tui::ResumeCommand) -> Result<()> {
     use std::os::unix::process::CommandExt;
-    let mut command = std::process::Command::new(&cmd[0]);
-    command.args(&cmd[1..]);
+    let mut command = std::process::Command::new(&resume.args[0]);
+    command.args(&resume.args[1..]);
+    // Claude Code requires being in the project directory to find the session
+    if let Some(ref cwd) = resume.cwd {
+        let path = std::path::Path::new(cwd);
+        if path.is_dir() {
+            command.current_dir(path);
+        }
+    }
     // Replace current process with the resume command
     let err = command.exec();
-    Err(anyhow::anyhow!("Failed to exec {}: {err}", cmd[0]))
+    Err(anyhow::anyhow!("Failed to exec {}: {err}", resume.args[0]))
 }
 
 fn truncate_project(project: &str, max: usize) -> String {

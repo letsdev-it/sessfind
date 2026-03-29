@@ -2,8 +2,8 @@ pub mod claude_code;
 pub mod copilot;
 pub mod opencode;
 
-use anyhow::Result;
 use crate::models::{Message, Session};
+use anyhow::Result;
 
 pub trait SessionSource {
     fn name(&self) -> &'static str;

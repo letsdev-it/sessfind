@@ -53,8 +53,10 @@ impl IndexEngine {
 
     pub fn index_source(&self, source: &dyn SessionSource, force: bool) -> Result<IndexStats> {
         let sessions = source.list_sessions()?;
-        let mut stats = IndexStats::default();
-        stats.total_sessions = sessions.len();
+        let mut stats = IndexStats {
+            total_sessions: sessions.len(),
+            ..Default::default()
+        };
 
         let sessions_to_index: Vec<&Session> = if force {
             sessions.iter().collect()
@@ -194,10 +196,7 @@ impl IndexEngine {
                 }
             }
 
-            let full_text = doc
-                .get_first(text_f)
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let full_text = doc.get_first(text_f).and_then(|v| v.as_str()).unwrap_or("");
 
             let snippet = make_snippet(full_text, &params.query, 150);
 
@@ -218,7 +217,7 @@ impl IndexEngine {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string(),
-                source: Source::from_str(source_val).unwrap_or(Source::ClaudeCode),
+                source: Source::parse_source(source_val).unwrap_or(Source::ClaudeCode),
                 project: project_val.to_string(),
                 timestamp: ts_val,
                 title: if title_val.is_empty() {
@@ -277,13 +276,38 @@ impl IndexEngine {
                     .to_string();
 
                 Some(SearchResult {
-                    chunk_id: doc.get_first(chunk_id_f).and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    session_id: doc.get_first(session_id_f).and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    source: Source::from_str(doc.get_first(source_f).and_then(|v| v.as_str()).unwrap_or("")).unwrap_or(Source::ClaudeCode),
-                    project: doc.get_first(project_f).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    chunk_id: doc
+                        .get_first(chunk_id_f)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    session_id: doc
+                        .get_first(session_id_f)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    source: Source::parse_source(
+                        doc.get_first(source_f)
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(""),
+                    )
+                    .unwrap_or(Source::ClaudeCode),
+                    project: doc
+                        .get_first(project_f)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     timestamp: ts_val,
-                    title: if title_val.is_empty() { None } else { Some(title_val) },
-                    snippet: doc.get_first(text_f).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    title: if title_val.is_empty() {
+                        None
+                    } else {
+                        Some(title_val)
+                    },
+                    snippet: doc
+                        .get_first(text_f)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     score,
                 })
             })
@@ -326,10 +350,7 @@ impl IndexEngine {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let text = doc
-                    .get_first(text_f)
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let text = doc.get_first(text_f).and_then(|v| v.as_str()).unwrap_or("");
                 // First line as snippet preview
                 let preview: String = text
                     .lines()
@@ -339,12 +360,33 @@ impl IndexEngine {
                     .join(" | ");
 
                 Some(SearchResult {
-                    chunk_id: doc.get_first(chunk_id_f).and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    session_id: doc.get_first(session_id_f).and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    source: Source::from_str(doc.get_first(source_f).and_then(|v| v.as_str()).unwrap_or("")).unwrap_or(Source::ClaudeCode),
-                    project: doc.get_first(project_f).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    chunk_id: doc
+                        .get_first(chunk_id_f)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    session_id: doc
+                        .get_first(session_id_f)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    source: Source::parse_source(
+                        doc.get_first(source_f)
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(""),
+                    )
+                    .unwrap_or(Source::ClaudeCode),
+                    project: doc
+                        .get_first(project_f)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     timestamp: ts_val,
-                    title: if title_val.is_empty() { None } else { Some(title_val) },
+                    title: if title_val.is_empty() {
+                        None
+                    } else {
+                        Some(title_val)
+                    },
                     snippet: preview,
                     score,
                 })
@@ -353,6 +395,81 @@ impl IndexEngine {
 
         results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
         Ok(results)
+    }
+
+    /// Dump all chunks with full text (for semantic plugin).
+    pub fn dump_all_chunks(&self) -> Result<Vec<sessfind_common::DumpChunk>> {
+        let reader = self.index.reader()?;
+        let searcher = reader.searcher();
+
+        let chunk_id_f = self.schema.get_field("chunk_id").unwrap();
+        let session_id_f = self.schema.get_field("session_id").unwrap();
+        let source_f = self.schema.get_field("source").unwrap();
+        let project_f = self.schema.get_field("project").unwrap();
+        let text_f = self.schema.get_field("text").unwrap();
+        let timestamp_f = self.schema.get_field("timestamp").unwrap();
+        let title_f = self.schema.get_field("title").unwrap();
+
+        let query = AllQuery;
+        let top_docs = searcher.search(&query, &TopDocs::with_limit(100_000))?;
+
+        let mut chunks: Vec<sessfind_common::DumpChunk> = top_docs
+            .into_iter()
+            .filter_map(|(_score, addr)| {
+                let doc: tantivy::TantivyDocument = searcher.doc(addr).ok()?;
+                let ts_val = doc
+                    .get_first(timestamp_f)
+                    .and_then(|v| v.as_datetime())
+                    .map(|dt| {
+                        chrono::DateTime::from_timestamp(dt.into_timestamp_secs(), 0)
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+                let title_val = doc
+                    .get_first(title_f)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                Some(sessfind_common::DumpChunk {
+                    chunk_id: doc
+                        .get_first(chunk_id_f)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    session_id: doc
+                        .get_first(session_id_f)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    source: Source::parse_source(
+                        doc.get_first(source_f)
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(""),
+                    )
+                    .unwrap_or(Source::ClaudeCode),
+                    project: doc
+                        .get_first(project_f)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    timestamp: ts_val,
+                    title: if title_val.is_empty() {
+                        None
+                    } else {
+                        Some(title_val)
+                    },
+                    text: doc
+                        .get_first(text_f)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                })
+            })
+            .collect();
+
+        chunks.sort_by(|a, b| a.chunk_id.cmp(&b.chunk_id));
+        Ok(chunks)
     }
 
     #[allow(dead_code)]
@@ -516,10 +633,7 @@ fn parse_fts_user_query(index: &Index, text_field: Field, query: &str) -> Result
                 if base.is_empty() {
                     Box::new(AllQuery)
                 } else {
-                    let pat = format!(
-                        "^{}.*",
-                        escape_fst_regex_literal(&base.to_lowercase())
-                    );
+                    let pat = format!("^{}.*", escape_fst_regex_literal(&base.to_lowercase()));
                     Box::new(
                         RegexQuery::from_pattern(&pat, text_field)
                             .map_err(|e| anyhow::anyhow!("regex query: {e}"))?,
@@ -550,7 +664,7 @@ fn make_snippet(text: &str, query: &str, max_len: usize) -> String {
     let query_terms: Vec<Vec<char>> = query
         .split_whitespace()
         .map(|t| {
-            let t = t.trim_start_matches(|c| c == '+' || c == '-');
+            let t = t.trim_start_matches(['+', '-']);
             let t = if is_unquoted_trailing_star_token(t) {
                 t[..t.len() - 1].to_lowercase()
             } else {
@@ -591,11 +705,4 @@ pub struct IndexStats {
     pub total_chunks: usize,
 }
 
-pub struct SearchParams {
-    pub query: String,
-    pub limit: usize,
-    pub source: Option<String>,
-    pub project: Option<String>,
-    pub after: Option<chrono::DateTime<chrono::Utc>>,
-    pub before: Option<chrono::DateTime<chrono::Utc>>,
-}
+pub use crate::models::SearchParams;

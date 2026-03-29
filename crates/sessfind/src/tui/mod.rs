@@ -6,17 +6,19 @@ use std::io::stdout;
 use std::time::Duration;
 
 use anyhow::Result;
+use crossterm::ExecutableCommand;
 use crossterm::event::{self, Event};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use crossterm::ExecutableCommand;
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 
 use crate::indexer::engine::IndexEngine;
 
-pub fn run(engine: &IndexEngine) -> Result<Option<Vec<String>>> {
+pub use app::ResumeCommand;
+
+pub fn run(engine: &IndexEngine) -> Result<Option<ResumeCommand>> {
     // Setup terminal
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
@@ -28,6 +30,12 @@ pub fn run(engine: &IndexEngine) -> Result<Option<Vec<String>>> {
     // Main loop
     loop {
         terminal.draw(|f| ui::draw(f, &app))?;
+
+        // If semantic search was requested, run it now (after UI redraw showed "Searching...")
+        if app.semantic_searching {
+            app.run_pending_semantic_search();
+            continue;
+        }
 
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
