@@ -9,7 +9,7 @@ crates/
 └── sessfind-semantic/  # optional plugin (embedder, sqlite-vec store)
 ```
 
-- **`sessfind`** — the main binary. Handles the TUI, CLI commands, indexing pipeline, source adapters (Copilot, Claude, OpenCode, Cursor), FTS/Fuzzy/LLM search, and session resume.
+- **`sessfind`** — the main binary. Handles the TUI, CLI commands, indexing pipeline, source adapters (Copilot, Claude, OpenCode, Cursor, Codex), FTS/Fuzzy/LLM search, and session resume.
 - **`sessfind-common`** — shared data types used across crates: `Source`, `SearchResult`, `SearchParams`, and the plugin communication protocol.
 - **`sessfind-semantic`** — optional standalone binary. Implements the semantic search plugin: generates embeddings and stores them in `sqlite-vec`. Discovered and invoked by the main binary via `PATH`.
 

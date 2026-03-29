@@ -2,7 +2,7 @@
 
 ## Indexing pipeline
 
-1. sessfind reads session files from each configured source (GitHub Copilot, Claude Code, OpenCode, Cursor).
+1. sessfind reads session files from each configured source (GitHub Copilot, Claude Code, OpenCode, Cursor, Codex).
 2. User/assistant messages are paired and split into chunks (~6000 chars each).
 3. Chunks are indexed with [tantivy](https://github.com/quickwit-oss/tantivy) full-text search.
 
@@ -38,5 +38,6 @@ When you select a session and press `Enter`, sessfind replaces the current proce
 | Claude Code | `claude --resume SESSION_ID` |
 | OpenCode | `opencode --session SESSION_ID` |
 | Cursor | `cursor PROJECT_PATH` |
+| Codex | `codex resume SESSION_ID` |
 
 The `exec()` call means the terminal is handed off cleanly to the AI tool — sessfind's process is replaced, not kept running in the background.

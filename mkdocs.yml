@@ -1,6 +1,6 @@
 site_name: sessfind
 site_url: https://letsdev-it.github.io/sessfind/
-site_description: CLI tool to search and resume AI sessions across GitHub Copilot, Claude Code, OpenCode, and Cursor
+site_description: CLI tool to search and resume AI sessions across GitHub Copilot, Claude Code, OpenCode, Cursor, and Codex
 repo_url: https://github.com/letsdev-it/sessfind
 repo_name: letsdev-it/sessfind
 edit_uri: edit/main/docs/

@@ -10,6 +10,7 @@ use crate::indexer::engine::IndexEngine;
 use crate::semantic;
 use crate::sources::SessionSource;
 use crate::sources::claude_code::ClaudeCodeSource;
+use crate::sources::codex::CodexSource;
 use crate::sources::copilot::CopilotSource;
 use crate::sources::cursor::CursorSource;
 use crate::sources::opencode::OpenCodeSource;
@@ -90,6 +91,7 @@ fn run_index() -> Result<usize> {
         Box::new(OpenCodeSource::new()),
         Box::new(CopilotSource::new()),
         Box::new(CursorSource::new()),
+        Box::new(CodexSource::new()),
     ];
 
     let mut total_new = 0usize;
@@ -121,6 +123,7 @@ fn watch_dirs() -> Vec<(&'static str, PathBuf, bool)> {
             false,
         ),
         ("cursor", config::cursor_projects_dir(), true),
+        ("codex", config::codex_sessions_dir(), true),
     ];
 
     candidates
