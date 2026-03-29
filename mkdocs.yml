@@ -46,6 +46,7 @@ nav:
     - CLI Commands: usage/cli.md
     - Search Modes: usage/search-modes.md
     - LLM Configuration: usage/llm-configuration.md
+    - Automatic Indexing: usage/automatic-indexing.md
   - Plugins:
     - Semantic Search: plugins/semantic-search.md
   - Architecture:
