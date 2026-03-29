@@ -1,0 +1,272 @@
+mod config;
+mod indexer;
+mod interactive;
+mod models;
+mod search;
+mod sources;
+
+use anyhow::Result;
+use chrono::{NaiveDate, TimeZone, Utc};
+use clap::{Parser, Subcommand};
+
+use crate::indexer::engine::{IndexEngine, SearchParams};
+use crate::sources::claude_code::ClaudeCodeSource;
+use crate::sources::copilot::CopilotSource;
+use crate::sources::opencode::OpenCodeSource;
+use crate::sources::SessionSource;
+
+#[derive(Parser)]
+#[command(name = "session-seek", about = "Search past AI coding assistant sessions")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Index sessions from all sources
+    Index {
+        /// Source to index (claude, opencode, copilot, all)
+        #[arg(long, default_value = "all")]
+        source: String,
+        /// Force re-index all sessions
+        #[arg(long)]
+        force: bool,
+    },
+    /// Search indexed sessions
+    Search {
+        /// Search query
+        query: String,
+        /// Filter by source (claude, opencode, copilot)
+        #[arg(long, short = 's')]
+        source: Option<String>,
+        /// Filter by project name (substring match)
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+        /// Only results after this date (YYYY-MM-DD)
+        #[arg(long)]
+        after: Option<String>,
+        /// Only results before this date (YYYY-MM-DD)
+        #[arg(long)]
+        before: Option<String>,
+        /// Max results
+        #[arg(long, short = 'n', default_value = "10")]
+        limit: usize,
+    },
+    /// Show full session content
+    Show {
+        /// Session ID (from search results)
+        session_id: String,
+    },
+    /// Interactive fuzzy search (TUI)
+    Browse,
+    /// Show index statistics
+    Stats,
+}
+
+fn get_sources(filter: &str) -> Vec<Box<dyn SessionSource>> {
+    let mut sources: Vec<Box<dyn SessionSource>> = Vec::new();
+    match filter {
+        "all" => {
+            sources.push(Box::new(ClaudeCodeSource::new()));
+            sources.push(Box::new(OpenCodeSource::new()));
+            sources.push(Box::new(CopilotSource::new()));
+        }
+        "claude" => sources.push(Box::new(ClaudeCodeSource::new())),
+        "opencode" => sources.push(Box::new(OpenCodeSource::new())),
+        "copilot" => sources.push(Box::new(CopilotSource::new())),
+        other => {
+            eprintln!("Unknown source: {other}. Available: claude, opencode, copilot, all");
+        }
+    }
+    sources
+}
+
+fn parse_date(s: &str) -> Result<chrono::DateTime<Utc>> {
+    let date = NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .map_err(|_| anyhow::anyhow!("Invalid date format: {s}. Expected YYYY-MM-DD"))?;
+    Ok(Utc.from_utc_datetime(
+        &date.and_hms_opt(0, 0, 0).unwrap(),
+    ))
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let data_dir = config::data_dir();
+    let engine = IndexEngine::open(&data_dir)?;
+
+    match cli.command {
+        Commands::Index { source, force } => {
+            let sources = get_sources(&source);
+            for src in &sources {
+                eprint!("Indexing {}... ", src.name());
+                let stats = engine.index_source(src.as_ref(), force)?;
+                if stats.new_sessions == 0 {
+                    eprintln!("up to date ({} sessions)", stats.total_sessions);
+                } else {
+                    eprintln!(
+                        "done ({} new sessions, {} chunks)",
+                        stats.new_sessions, stats.total_chunks
+                    );
+                }
+            }
+        }
+        Commands::Search {
+            query,
+            source,
+            project,
+            after,
+            before,
+            limit,
+        } => {
+            let after_dt = after.as_deref().map(parse_date).transpose()?;
+            let before_dt = before.as_deref().map(parse_date).transpose()?;
+
+            let params = SearchParams {
+                query,
+                limit,
+                source,
+                project,
+                after: after_dt,
+                before: before_dt,
+            };
+
+            let results = engine.search(&params)?;
+            if results.is_empty() {
+                println!("No results found.");
+                return Ok(());
+            }
+
+            // Header
+            println!(
+                "\x1b[1m{:<6} {:<10} {:<30} {:<12} {}\x1b[0m",
+                "Score", "Source", "Project", "Date", "Preview"
+            );
+            println!("{}", "\x1b[90m{}\x1b[0m".replace("{}", &"-".repeat(100)));
+
+            for r in &results {
+                let date = r.timestamp.format("%Y-%m-%d");
+                let project = truncate_project(&r.project, 28);
+                let snippet = r.snippet.replace('\n', " ");
+                let snippet = truncate_str(&snippet, 60);
+
+                let source_colored = match r.source {
+                    models::Source::ClaudeCode => format!("\x1b[35m{:<10}\x1b[0m", "claude"),
+                    models::Source::OpenCode => format!("\x1b[36m{:<10}\x1b[0m", "opencode"),
+                    models::Source::Copilot => format!("\x1b[33m{:<10}\x1b[0m", "copilot"),
+                };
+
+                println!(
+                    "\x1b[32m{:<6.2}\x1b[0m {} {:<30} \x1b[90m{:<12}\x1b[0m {}",
+                    r.score, source_colored, project, date, snippet
+                );
+            }
+
+            // Show session IDs for `show` command
+            println!();
+            println!(
+                "\x1b[90mUse `session-seek show <SESSION_ID>` to view full session.\x1b[0m"
+            );
+            let unique_sessions: Vec<_> = {
+                let mut seen = std::collections::HashSet::new();
+                results
+                    .iter()
+                    .filter(|r| seen.insert(&r.session_id))
+                    .take(3)
+                    .collect()
+            };
+            for r in &unique_sessions {
+                println!(
+                    "\x1b[90m  {} ({})\x1b[0m",
+                    r.session_id,
+                    r.source.as_str()
+                );
+            }
+        }
+        Commands::Browse => {
+            interactive::run_interactive(&engine)?;
+        }
+        Commands::Show { session_id } => {
+            let chunks = engine.get_session_chunks(&session_id)?;
+            if chunks.is_empty() {
+                // Try partial match
+                eprintln!("No session found with ID: {session_id}");
+                eprintln!("Tip: Use the full session ID from search results.");
+                return Ok(());
+            }
+
+            let first = &chunks[0];
+            println!(
+                "\x1b[1mSession:\x1b[0m {} \x1b[90m({})\x1b[0m",
+                first.session_id,
+                first.source.as_str()
+            );
+            println!("\x1b[1mProject:\x1b[0m {}", first.project);
+            println!(
+                "\x1b[1mDate:\x1b[0m    {}",
+                first.timestamp.format("%Y-%m-%d %H:%M")
+            );
+            if let Some(title) = &first.title {
+                println!("\x1b[1mTitle:\x1b[0m   {title}");
+            }
+            println!("{}", "-".repeat(80));
+            println!();
+
+            for chunk in &chunks {
+                // Color USER: and ASSISTANT: prefixes
+                for line in chunk.snippet.lines() {
+                    if line.starts_with("USER:") {
+                        println!("\x1b[32m{}\x1b[0m", line);
+                    } else if line.starts_with("ASSISTANT:") {
+                        println!("\x1b[34m{}\x1b[0m", line);
+                    } else if line.starts_with("[tools:") {
+                        println!("\x1b[90m{}\x1b[0m", line);
+                    } else {
+                        println!("{}", line);
+                    }
+                }
+                println!();
+            }
+        }
+        Commands::Stats => {
+            let claude = engine.session_count(Some("claude"))?;
+            let opencode = engine.session_count(Some("opencode"))?;
+            let copilot = engine.session_count(Some("copilot"))?;
+            let total = engine.session_count(None)?;
+
+            println!("\x1b[1mIndexed sessions:\x1b[0m");
+            println!("  \x1b[35mClaude Code:\x1b[0m {claude}");
+            println!("  \x1b[36mOpenCode:\x1b[0m    {opencode}");
+            println!("  \x1b[33mCopilot:\x1b[0m     {copilot}");
+            println!("  Total:       {total}");
+            println!();
+            println!(
+                "\x1b[90mIndex location: {}\x1b[0m",
+                config::data_dir().display()
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn truncate_project(project: &str, max: usize) -> String {
+    let chars: Vec<char> = project.chars().collect();
+    if chars.len() <= max {
+        project.to_string()
+    } else {
+        let skip = chars.len() - (max - 3);
+        let truncated: String = chars[skip..].iter().collect();
+        format!("...{truncated}")
+    }
+}
+
+fn truncate_str(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        s.to_string()
+    } else {
+        let truncated: String = chars[..max - 3].iter().collect();
+        format!("{truncated}...")
+    }
+}

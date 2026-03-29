@@ -1,0 +1,25 @@
+[package]
+name = "session-seek"
+version = "0.1.0"
+edition = "2024"
+description = "Search past AI coding assistant sessions (Claude Code, OpenCode, Copilot)"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+rayon = "1"
+rusqlite = { version = "0.35", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+crossterm = "0.28"
+ratatui = "0.29"
+serde_yaml = "0.9"
+tantivy = "0.22"
+unicode-width = "0.2"
+walkdir = "2"
+
+[profile.release]
+lto = true
+strip = true
