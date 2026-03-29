@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.3.0...sessfind-v0.3.1) - 2026-03-29
+
+### Other
+
+- update Cargo.lock dependencies
+
 ## [0.2.0](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.1.3...sessfind-v0.2.0) - 2026-03-29
 
 ### Added
