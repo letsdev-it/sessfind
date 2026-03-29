@@ -170,7 +170,7 @@ impl SessionSource for CursorSource {
             let started_at = metadata
                 .modified()
                 .ok()
-                .map(|t| DateTime::<Utc>::from(t))
+                .map(DateTime::<Utc>::from)
                 .unwrap_or_else(Utc::now);
 
             // Read first user message as title
