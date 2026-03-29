@@ -3,9 +3,8 @@ use std::path::PathBuf;
 use anyhow::Result;
 
 use crate::config::Config;
-use crate::models::SearchResult;
 
-/// An LLM CLI backend that can be used for search re-ranking.
+/// An LLM CLI backend that can be used for agentic search.
 #[derive(Debug, Clone)]
 pub struct LlmBackend {
     pub name: String,
@@ -33,14 +32,13 @@ pub fn detect_backends() -> Vec<LlmBackend> {
     let mut backends = Vec::new();
 
     let definitions: &[(&str, &str, &[&str], &str)] = &[
-        ("claude", "claude", &["-p", "--no-session-persistence"], "--model"),
+        ("claude", "claude", &["-p"], "--model"),
         ("opencode", "opencode", &["run"], "-m"),
         ("copilot", "copilot", &["-p"], "--model"),
     ];
 
     for &(name, bin, headless_args, model_flag) in definitions {
         if let Ok(path) = which::which(bin) {
-            // Read model from config; empty string or missing = None
             let model = config
                 .llm_model(name)
                 .filter(|s| !s.is_empty())
@@ -59,96 +57,66 @@ pub fn detect_backends() -> Vec<LlmBackend> {
     backends
 }
 
-/// Build a re-ranking prompt from the user query and FTS candidate results.
-pub fn build_rerank_prompt(query: &str, candidates: &[SearchResult]) -> String {
-    let mut candidates_json = String::from("[\n");
-    for (i, r) in candidates.iter().enumerate() {
-        let snippet_preview: String = r
-            .snippet
-            .chars()
-            .take(200)
-            .map(|c| if c == '\n' { ' ' } else { c })
-            .collect();
-        let title = r.title.as_deref().unwrap_or("");
-        if i > 0 {
-            candidates_json.push_str(",\n");
-        }
-        candidates_json.push_str(&format!(
-            r#"  {{"i":{i},"session_id":"{}","source":"{}","project":"{}","title":"{}","snippet":"{}"}}"#,
-            r.session_id,
-            r.source.as_str(),
-            r.project.replace('"', "'"),
-            title.replace('"', "'"),
-            snippet_preview.replace('"', "'").replace('\\', ""),
-        ));
-    }
-    candidates_json.push_str("\n]");
-
+/// Build a prompt that asks the LLM to generate FTS queries for the user's intent.
+pub fn build_query_gen_prompt(user_query: &str) -> String {
     format!(
-        r#"You are a search re-ranking engine for AI coding session logs. Given a user query and candidate sessions, return the most relevant ones.
+        r#"You are a search query generator for an AI coding session search engine.
+The engine uses full-text search (tantivy/BM25) on conversation logs between users and AI assistants.
 
-USER QUERY: {query}
+Query syntax supported:
+- word1 word2 = OR (any word matches)
+- +word1 +word2 = AND (all words required)
+- "exact phrase" = phrase match
+- -word = exclude word
+- prefix* = prefix wildcard
 
-CANDIDATES:
-{candidates_json}
+User's search intent: {user_query}
 
-Return ONLY a JSON array of objects with "i" (candidate index) and "score" (0.0-1.0 relevance). Max 20 results, sorted by score descending. No other text, no markdown fences.
-Example: [{{"i":0,"score":0.95}},{{"i":3,"score":0.8}}]"#
+Generate 10-15 FTS queries that would find relevant sessions. Think about:
+- Exact keywords the conversation might contain
+- Synonyms and related technical terms
+- English AND Polish variants if the intent uses either language
+
+Return ONLY a JSON array of query strings. No other text, no markdown fences.
+Example: ["+CI +fix", "\"github actions\"", "pipeline deploy"]"#
     )
 }
 
-/// Parse the LLM re-ranking response and map back to full SearchResult objects.
-pub fn parse_rerank_response(response: &str, candidates: &[SearchResult]) -> Vec<SearchResult> {
-    // Strip markdown code fences if present
-    let json_str = response
-        .trim()
-        .strip_prefix("```json")
-        .or_else(|| response.trim().strip_prefix("```"))
-        .and_then(|s| s.strip_suffix("```"))
-        .unwrap_or(response.trim());
+/// Parse the LLM response containing generated FTS queries.
+pub fn parse_query_gen_response(response: &str) -> Vec<String> {
+    let json_str = strip_markdown_fences(response);
 
-    #[derive(serde::Deserialize)]
-    struct RankedItem {
-        i: usize,
-        score: f32,
+    match serde_json::from_str::<Vec<String>>(json_str.trim()) {
+        Ok(queries) => queries.into_iter().filter(|q| !q.is_empty()).collect(),
+        Err(_) => Vec::new(),
     }
-
-    let ranked: Vec<RankedItem> = match serde_json::from_str(json_str.trim()) {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-
-    ranked
-        .into_iter()
-        .filter_map(|item| {
-            candidates.get(item.i).map(|r| {
-                let mut result = r.clone();
-                result.score = item.score;
-                result
-            })
-        })
-        .collect()
 }
 
-/// Run LLM search: invoke the backend in headless mode with the given prompt.
-pub fn search(backend: &LlmBackend, prompt: &str) -> Result<String> {
+/// Strip markdown code fences from LLM response.
+fn strip_markdown_fences(response: &str) -> &str {
+    let trimmed = response.trim();
+    trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .and_then(|s| s.strip_suffix("```"))
+        .map(|s| s.trim())
+        .unwrap_or(trimmed)
+}
+
+/// Invoke the LLM backend in headless mode with the given prompt.
+pub fn invoke(backend: &LlmBackend, prompt: &str) -> Result<String> {
     let mut cmd = std::process::Command::new(&backend.binary);
 
-    // Add headless args
     for arg in &backend.headless_args {
         cmd.arg(arg);
     }
 
-    // Add model flag only if user configured a model override
     if let Some(ref model) = backend.model {
         cmd.arg(backend.model_flag).arg(model);
     }
 
-    // For claude/copilot, prompt is positional arg at the end.
-    // For opencode run, the message is also positional.
     cmd.arg(prompt);
 
-    // Extra flags per backend
     match backend.name.as_str() {
         "claude" => {
             cmd.arg("--max-budget-usd").arg("0.05");
@@ -163,87 +131,69 @@ pub fn search(backend: &LlmBackend, prompt: &str) -> Result<String> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("LLM search via {} failed: {stderr}", backend.name);
+        anyhow::bail!("LLM invocation via {} failed: {stderr}", backend.name);
     }
 
     let stdout = String::from_utf8(output.stdout)?;
     Ok(stdout)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
-    use crate::models::Source;
 
-    fn sample_candidates() -> Vec<SearchResult> {
-        vec![
-            SearchResult {
-                chunk_id: "c1".into(),
-                session_id: "s1".into(),
-                source: Source::ClaudeCode,
-                project: "/project/a".into(),
-                timestamp: Utc::now(),
-                title: Some("Fix auth bug".into()),
-                snippet: "USER: fix the auth bug\nASSISTANT: done".into(),
-                score: 1.0,
-            },
-            SearchResult {
-                chunk_id: "c2".into(),
-                session_id: "s2".into(),
-                source: Source::OpenCode,
-                project: "/project/b".into(),
-                timestamp: Utc::now(),
-                title: None,
-                snippet: "USER: add logging\nASSISTANT: added".into(),
-                score: 0.9,
-            },
-        ]
+    #[test]
+    fn query_gen_prompt_contains_intent() {
+        let prompt = build_query_gen_prompt("fix CI pipeline");
+        assert!(prompt.contains("fix CI pipeline"));
+        assert!(prompt.contains("JSON array"));
     }
 
     #[test]
-    fn build_prompt_contains_query_and_candidates() {
-        let candidates = sample_candidates();
-        let prompt = build_rerank_prompt("auth bug", &candidates);
-        assert!(prompt.contains("auth bug"));
-        assert!(prompt.contains("s1"));
-        assert!(prompt.contains("s2"));
-        assert!(prompt.contains("Fix auth bug"));
+    fn parse_query_gen_valid() {
+        let response = r#"["+CI +fix", "\"github actions\"", "pipeline deploy"]"#;
+        let queries = parse_query_gen_response(response);
+        assert_eq!(queries.len(), 3);
+        assert_eq!(queries[0], "+CI +fix");
+        assert_eq!(queries[1], "\"github actions\"");
+        assert_eq!(queries[2], "pipeline deploy");
     }
 
     #[test]
-    fn parse_valid_response() {
-        let candidates = sample_candidates();
-        let response = r#"[{"i":1,"score":0.95},{"i":0,"score":0.7}]"#;
-        let results = parse_rerank_response(response, &candidates);
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].session_id, "s2");
-        assert_eq!(results[0].score, 0.95);
-        assert_eq!(results[1].session_id, "s1");
+    fn parse_query_gen_markdown_fenced() {
+        let response = "```json\n[\"+auth\", \"login JWT\"]\n```";
+        let queries = parse_query_gen_response(response);
+        assert_eq!(queries.len(), 2);
+        assert_eq!(queries[0], "+auth");
     }
 
     #[test]
-    fn parse_markdown_fenced_response() {
-        let candidates = sample_candidates();
-        let response = "```json\n[{\"i\":0,\"score\":0.8}]\n```";
-        let results = parse_rerank_response(response, &candidates);
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].session_id, "s1");
+    fn parse_query_gen_invalid_returns_empty() {
+        let queries = parse_query_gen_response("sorry I can't help");
+        assert!(queries.is_empty());
     }
 
     #[test]
-    fn parse_invalid_response_returns_empty() {
-        let candidates = sample_candidates();
-        let results = parse_rerank_response("sorry I can't help", &candidates);
-        assert!(results.is_empty());
+    fn parse_query_gen_filters_empty_strings() {
+        let response = r#"["auth", "", "login"]"#;
+        let queries = parse_query_gen_response(response);
+        assert_eq!(queries.len(), 2);
+        assert_eq!(queries[0], "auth");
+        assert_eq!(queries[1], "login");
     }
 
     #[test]
-    fn parse_out_of_bounds_index_skipped() {
-        let candidates = sample_candidates();
-        let response = r#"[{"i":0,"score":0.9},{"i":99,"score":0.5}]"#;
-        let results = parse_rerank_response(response, &candidates);
-        assert_eq!(results.len(), 1);
+    fn strip_fences_plain() {
+        assert_eq!(strip_markdown_fences("[\"a\"]"), "[\"a\"]");
+    }
+
+    #[test]
+    fn strip_fences_json() {
+        assert_eq!(strip_markdown_fences("```json\n[\"a\"]\n```"), "[\"a\"]");
+    }
+
+    #[test]
+    fn strip_fences_bare() {
+        assert_eq!(strip_markdown_fences("```\n[\"a\"]\n```"), "[\"a\"]");
     }
 }

@@ -18,3 +18,11 @@ Examples:
 ## Documentation
 
 Always update `README.md` after making user-facing changes (new flags, features, behavior changes, etc.).
+
+## Before push
+
+Before pushing a branch, run the same checks that CI runs for pull requests:
+
+- `cargo fmt --all -- --check`
+- `cargo build --workspace`
+- `cargo test --workspace`

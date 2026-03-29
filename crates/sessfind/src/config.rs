@@ -10,7 +10,11 @@ pub use sessfind_common::data_dir;
 /// Path to config file: ~/.config/sessfind/config.json
 pub fn config_path() -> PathBuf {
     dirs::config_dir()
-        .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")).join(".config"))
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".config")
+        })
         .join("sessfind")
         .join("config.json")
 }
@@ -80,9 +84,7 @@ mod tests {
     #[test]
     fn config_serde_roundtrip() {
         let mut config = Config::default();
-        config
-            .llm_models
-            .insert("claude".into(), "sonnet".into());
+        config.llm_models.insert("claude".into(), "sonnet".into());
         config
             .llm_models
             .insert("opencode".into(), "anthropic/claude-sonnet-4-6".into());

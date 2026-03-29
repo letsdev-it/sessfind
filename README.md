@@ -24,7 +24,7 @@
 - Interactive TUI with split-pane layout, real-time filtering, and session preview
 - Fuzzy substring matching as alternative search mode
 - **Semantic search** — find conceptually similar sessions using ML embeddings (optional plugin)
-- **LLM search** — re-rank results using installed AI CLI tools (Claude Code, OpenCode, Copilot)
+- **LLM search** — agentic search using installed AI CLI tools (Claude Code, OpenCode, Copilot)
 - Resume any session directly from the search results
 - Incremental indexing — only processes new/changed sessions
 - Zero external runtime dependencies — single static binary
@@ -136,7 +136,7 @@ shopp*                  prefix wildcard
 
 **Fuzzy** — case-insensitive substring match across content, project name, and title.
 
-**LLM** — uses installed AI CLI tools (Claude Code, OpenCode, Copilot) to re-rank FTS results by relevance. Each detected tool appears as a separate mode (e.g., "LLM (claude)", "LLM (opencode)"). Press `Enter` to trigger search — sessfind first runs FTS to get candidates, then sends them to the selected LLM for intelligent re-ranking. No extra installation needed — if you have `claude`, `opencode`, or `copilot` on your PATH, the mode appears automatically.
+**LLM** — agentic search using installed AI CLI tools (Claude Code, OpenCode, Copilot). Each detected tool appears as a separate mode (e.g., "LLM (claude)", "LLM (opencode)"). Press `Enter` to trigger search — the LLM analyzes your intent and generates optimized FTS queries (synonyms, related terms, both languages), then sessfind executes them and merges results. Works great with natural language queries like "that conversation about fixing CI". No extra installation needed — if you have `claude`, `opencode`, or `copilot` on your PATH, the mode appears automatically.
 
 **Semantic** — ML embedding similarity search (requires `sessfind-semantic` plugin). Finds conceptually similar sessions even when exact keywords don't match. Supports Polish and English. Press `Enter` to trigger search (not instant — runs the ML model).
 
@@ -216,7 +216,7 @@ sessfind llm-model-unset claude    # revert to tool's default model
 
 4. **Semantic search** — the optional `sessfind-semantic` plugin generates vector embeddings (multilingual-e5-small model, 384 dimensions) for each chunk and stores them in a local sqlite-vec database. Queries are embedded and compared via cosine similarity.
 
-5. **LLM search** — sessfind detects installed AI CLI tools (`claude`, `opencode`, `copilot`) and can use them for intelligent re-ranking. First, FTS returns ~100 candidates, then the selected LLM re-ranks them by relevance. The LLM is invoked in headless mode (e.g., `claude -p --no-session-persistence`).
+5. **LLM search** — sessfind detects installed AI CLI tools (`claude`, `opencode`, `copilot`) and uses them as search agents. The LLM analyzes the user's natural language query and generates optimized FTS queries (synonyms, related terms, multi-language). Sessfind executes each query and merges the results. The LLM is invoked in headless mode (e.g., `claude -p`).
 
 6. **Resume** — selecting a session and pressing Enter replaces the current process (`exec()`) with the appropriate tool's resume command.
 

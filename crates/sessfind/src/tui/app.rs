@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 use crate::indexer::engine::{IndexEngine, SearchParams};
@@ -58,8 +59,6 @@ pub struct App<'a> {
     engine: &'a IndexEngine,
     all_chunks: Vec<SearchResult>,
     cached_session_id: Option<String>,
-    /// FTS candidates stored for LLM re-ranking
-    llm_candidates: Vec<SearchResult>,
 }
 
 impl<'a> App<'a> {
@@ -96,7 +95,6 @@ impl<'a> App<'a> {
             engine,
             all_chunks,
             cached_session_id: None,
-            llm_candidates: Vec::new(),
         };
 
         app.load_detail();
@@ -168,30 +166,11 @@ impl<'a> App<'a> {
             self.load_detail();
             return;
         }
-
-        // First, run FTS to get candidates for re-ranking
-        let params = SearchParams {
-            query: self.input.clone(),
-            limit: 100,
-            source: None,
-            project: None,
-            after: None,
-            before: None,
-        };
-
-        match self.engine.search(&params) {
-            Ok(results) => {
-                self.llm_candidates = dedup_by_session(&results);
-                self.llm_searching = true;
-            }
-            Err(_) => {
-                self.results.clear();
-                self.load_detail();
-            }
-        }
+        self.llm_searching = true;
     }
 
     /// Actually run the LLM search (called from event loop after UI redraw).
+    /// The LLM generates FTS queries, which are then executed and merged.
     pub fn run_pending_llm_search(&mut self) {
         if !self.llm_searching {
             return;
@@ -203,30 +182,41 @@ impl<'a> App<'a> {
             _ => return,
         };
 
-        if self.llm_candidates.is_empty() {
-            self.results.clear();
-            self.load_detail();
-            return;
-        }
+        let prompt = llm::build_query_gen_prompt(&self.input);
 
-        let prompt = llm::build_rerank_prompt(&self.input, &self.llm_candidates);
-
-        match llm::search(&backend, &prompt) {
+        let queries = match llm::invoke(&backend, &prompt) {
             Ok(response) => {
-                let reranked = llm::parse_rerank_response(&response, &self.llm_candidates);
-                if reranked.is_empty() {
-                    // Fallback: show FTS candidates if LLM response unparseable
-                    self.results = self.llm_candidates.clone();
+                let parsed = llm::parse_query_gen_response(&response);
+                if parsed.is_empty() {
+                    // Fallback: use the original query as-is
+                    vec![self.input.clone()]
                 } else {
-                    self.results = reranked;
+                    parsed
                 }
             }
             Err(_) => {
-                // On error, fall back to FTS candidates
-                self.results = self.llm_candidates.clone();
+                // On error, fall back to plain FTS with user query
+                vec![self.input.clone()]
+            }
+        };
+
+        // Run each generated query and merge results
+        let mut all_results = Vec::new();
+        for query in queries {
+            let params = SearchParams {
+                query,
+                limit: 30,
+                source: None,
+                project: None,
+                after: None,
+                before: None,
+            };
+            if let Ok(results) = self.engine.search(&params) {
+                all_results.extend(results);
             }
         }
 
+        self.results = dedup_by_session_best_score(&all_results);
         self.selected = 0;
         self.detail_scroll = 0;
         self.load_detail();
@@ -367,6 +357,28 @@ fn dedup_by_session(results: &[SearchResult]) -> Vec<SearchResult> {
         .collect()
 }
 
+/// Dedup by session, keeping the highest-scoring result per session.
+/// Final results sorted by score descending.
+fn dedup_by_session_best_score(results: &[SearchResult]) -> Vec<SearchResult> {
+    let mut best: HashMap<String, SearchResult> = HashMap::new();
+    for r in results {
+        best.entry(r.session_id.clone())
+            .and_modify(|existing| {
+                if r.score > existing.score {
+                    *existing = r.clone();
+                }
+            })
+            .or_insert_with(|| r.clone());
+    }
+    let mut out: Vec<SearchResult> = best.into_values().collect();
+    out.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,5 +476,49 @@ mod tests {
     #[test]
     fn search_mode_semantic_label() {
         assert_eq!(SearchMode::Semantic.label(), "Semantic");
+    }
+
+    #[test]
+    fn dedup_best_score_keeps_highest() {
+        let ts = Utc::now();
+        let results = vec![
+            SearchResult {
+                chunk_id: "a:s1:0".into(),
+                session_id: "s1".into(),
+                source: Source::ClaudeCode,
+                project: "/p".into(),
+                timestamp: ts,
+                title: None,
+                snippet: "low score".into(),
+                score: 0.5,
+            },
+            SearchResult {
+                chunk_id: "a:s2:0".into(),
+                session_id: "s2".into(),
+                source: Source::OpenCode,
+                project: "/q".into(),
+                timestamp: ts,
+                title: None,
+                snippet: "other".into(),
+                score: 0.3,
+            },
+            SearchResult {
+                chunk_id: "a:s1:1".into(),
+                session_id: "s1".into(),
+                source: Source::ClaudeCode,
+                project: "/p".into(),
+                timestamp: ts,
+                title: None,
+                snippet: "high score".into(),
+                score: 0.9,
+            },
+        ];
+        let deduped = dedup_by_session_best_score(&results);
+        assert_eq!(deduped.len(), 2);
+        // Sorted by score descending
+        assert_eq!(deduped[0].session_id, "s1");
+        assert_eq!(deduped[0].score, 0.9);
+        assert_eq!(deduped[1].session_id, "s2");
+        assert_eq!(deduped[1].score, 0.3);
     }
 }

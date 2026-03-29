@@ -181,8 +181,8 @@ fn main() -> Result<()> {
             let params = SearchParams {
                 query: query.clone(),
                 limit,
-                source,
-                project,
+                source: source.clone(),
+                project: project.clone(),
                 after: after_dt,
                 before: before_dt,
             };
@@ -200,34 +200,57 @@ fn main() -> Result<()> {
                     eprintln!("No LLM CLI tools detected (claude, opencode, copilot).");
                     return Ok(());
                 }
-                // Use first available backend
                 let backend = &backends[0];
                 eprintln!("Searching with LLM ({})...", backend.display());
 
-                // FTS candidates first
-                let candidates = engine.search(&SearchParams {
-                    query: query.clone(),
-                    limit: 100,
-                    source: None,
-                    project: None,
-                    after: after_dt,
-                    before: before_dt,
-                })?;
+                // Ask LLM to generate FTS queries from user intent
+                let prompt = llm::build_query_gen_prompt(&query);
+                let response = llm::invoke(backend, &prompt)?;
+                let queries = llm::parse_query_gen_response(&response);
 
-                if candidates.is_empty() {
-                    eprintln!("No FTS candidates found to re-rank.");
-                    return Ok(());
-                }
-
-                let prompt = llm::build_rerank_prompt(&query, &candidates);
-                let response = llm::search(backend, &prompt)?;
-                let reranked = llm::parse_rerank_response(&response, &candidates);
-                if reranked.is_empty() {
-                    eprintln!("LLM returned no valid results, falling back to FTS.");
-                    candidates
+                let queries = if queries.is_empty() {
+                    eprintln!("LLM returned no queries, falling back to original query.");
+                    vec![query.clone()]
                 } else {
-                    reranked
+                    eprintln!("LLM generated {} queries", queries.len());
+                    queries
+                };
+
+                // Run each generated query and merge results
+                let mut all_results = Vec::new();
+                for q in &queries {
+                    let qparams = SearchParams {
+                        query: q.clone(),
+                        limit: 30,
+                        source: source.clone(),
+                        project: project.clone(),
+                        after: after_dt,
+                        before: before_dt,
+                    };
+                    if let Ok(results) = engine.search(&qparams) {
+                        all_results.extend(results);
+                    }
                 }
+
+                // Dedup by session, keep highest score, sort descending
+                let mut best: std::collections::HashMap<String, models::SearchResult> =
+                    std::collections::HashMap::new();
+                for r in all_results {
+                    best.entry(r.session_id.clone())
+                        .and_modify(|existing| {
+                            if r.score > existing.score {
+                                *existing = r.clone();
+                            }
+                        })
+                        .or_insert(r);
+                }
+                let mut merged: Vec<_> = best.into_values().collect();
+                merged.sort_by(|a, b| {
+                    b.score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                merged
             } else {
                 engine.search(&params)?
             };
