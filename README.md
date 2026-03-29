@@ -27,6 +27,7 @@
 - **LLM search** — agentic search using installed AI CLI tools (Claude Code, OpenCode, Copilot)
 - Resume any session directly from the search results
 - Incremental indexing — only processes new/changed sessions
+- **Automatic indexing** — background watcher re-indexes on session changes ([details](docs/automatic-indexing.md))
 - Zero external runtime dependencies — single static binary
 
 ## Supported Sources
@@ -193,7 +194,15 @@ sessfind dump-chunks
 sessfind llm-model-set claude sonnet
 sessfind llm-model-set opencode anthropic/claude-sonnet-4-6
 sessfind llm-model-unset claude    # revert to tool's default model
+
+# Automatic indexing (watch for session changes)
+sessfind watch                     # run watcher in foreground
+sessfind watch install             # install as system service (launchd / systemd)
+sessfind watch uninstall           # remove the service
+sessfind watch status              # check if the service is running
 ```
+
+See [docs/automatic-indexing.md](docs/automatic-indexing.md) for more options (shell hooks, cron, `--index` flag).
 
 ### CLI Search Flags
 
@@ -257,6 +266,7 @@ crates/
 | [walkdir](https://github.com/BurntSushi/walkdir) | Directory traversal |
 | [rayon](https://github.com/rayon-rs/rayon) | Parallel processing |
 | [which](https://github.com/harryfei/which-rs) | Plugin detection |
+| [notify](https://github.com/notify-rs/notify) | File system watching (for `sessfind watch`) |
 
 ### sessfind-semantic (optional plugin)
 

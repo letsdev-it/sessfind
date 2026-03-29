@@ -4,8 +4,10 @@ mod llm;
 mod models;
 mod search;
 pub mod semantic;
+mod service;
 mod sources;
 mod tui;
+mod watcher;
 
 use anyhow::Result;
 use chrono::{NaiveDate, TimeZone, Utc};
@@ -88,6 +90,21 @@ enum Commands {
         /// Provider name (claude, opencode, copilot)
         provider: String,
     },
+    /// Watch session directories and re-index on changes
+    Watch {
+        #[command(subcommand)]
+        action: Option<WatchAction>,
+    },
+}
+
+#[derive(Subcommand)]
+enum WatchAction {
+    /// Install watcher as a system service (launchd on macOS, systemd on Linux)
+    Install,
+    /// Remove the watcher system service
+    Uninstall,
+    /// Show whether the watcher service is running
+    Status,
 }
 
 fn get_sources(filter: &str) -> Vec<Box<dyn SessionSource>> {
@@ -429,6 +446,12 @@ fn main() -> Result<()> {
                 println!("No model override set for {provider}");
             }
         }
+        Commands::Watch { action } => match action {
+            None => watcher::run()?,
+            Some(WatchAction::Install) => service::install()?,
+            Some(WatchAction::Uninstall) => service::uninstall()?,
+            Some(WatchAction::Status) => service::status()?,
+        },
     }
 
     Ok(())
