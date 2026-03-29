@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.4.1...sessfind-v0.5.0) - 2026-03-29
+
+### Added
+
+- add Cursor as session source
+
+### Fixed
+
+- resolve clippy redundant_closure warning
+
+### Other
+
+- Merge branch 'main' into feat/cursor-support
+- bump workspace versions (minor)
+
 ## [0.4.1](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.4.0...sessfind-v0.4.1) - 2026-03-29
 
 ### Fixed
