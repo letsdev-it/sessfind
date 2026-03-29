@@ -1,0 +1,4 @@
+# https://release-plz.dev/docs/config
+[workspace]
+# sessfind is a binary CLI, not a library API — skip semver-checks against crates.io.
+semver_check = false
