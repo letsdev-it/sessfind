@@ -76,9 +76,13 @@ fn handle_search_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Enter => {
-            // In Semantic mode, Enter triggers the search
-            if app.search_mode == super::app::SearchMode::Semantic && !app.input.is_empty() {
-                app.request_semantic_search();
+            // Deferred modes: Enter triggers the search
+            if app.search_mode().is_deferred() && !app.input.is_empty() {
+                if app.search_mode().is_llm() {
+                    app.request_llm_search();
+                } else {
+                    app.request_semantic_search();
+                }
             } else if !app.results.is_empty() {
                 app.focus = Focus::Results;
             }

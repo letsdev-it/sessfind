@@ -155,13 +155,17 @@ fn draw_results_list(f: &mut Frame, app: &App, area: Rect) {
         .title(" Sessions ")
         .border_style(border_style);
 
-    if app.semantic_searching {
+    if app.semantic_searching || app.llm_searching {
+        let label = app.search_mode().label();
+        let color = if app.llm_searching {
+            Color::Yellow
+        } else {
+            Color::Cyan
+        };
         let p = Paragraph::new(Line::from(vec![
             Span::styled(
-                " Searching semantically",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
+                format!(" Searching with {label}"),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
             ),
             Span::styled("...", Style::default().fg(Color::DarkGray)),
         ]))
@@ -342,7 +346,7 @@ fn draw_detail_pane(f: &mut Frame, app: &App, area: Rect) {
 
     lines.push(Line::from(vec![
         Span::styled(" Method:  ", Style::default().fg(Color::DarkGray)),
-        Span::styled(app.search_mode.label(), Style::default().fg(Color::Green)),
+        Span::styled(app.search_mode().label(), Style::default().fg(Color::Green)),
         Span::styled(
             format!("  Score: {:.2}", selected.score),
             Style::default().fg(Color::DarkGray),
@@ -412,7 +416,7 @@ fn draw_input_bar(f: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(Color::DarkGray)
     };
 
-    let mode_label = format!("[{}]", app.search_mode.label());
+    let mode_label = format!("[{}]", app.search_mode().label());
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -437,8 +441,9 @@ fn draw_input_bar(f: &mut Frame, app: &App, area: Rect) {
     let input_widget = Paragraph::new(input_text);
     f.render_widget(input_widget, input_layout[0]);
 
-    // Mode badge — Cyan for Semantic, Green for others
-    let mode_color = match app.search_mode {
+    // Mode badge color per type
+    let mode_color = match app.search_mode() {
+        super::app::SearchMode::Llm(_) => Color::Yellow,
         super::app::SearchMode::Semantic => Color::Cyan,
         _ => Color::Green,
     };
@@ -473,10 +478,18 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         Span::styled("quit", Style::default().fg(Color::White)),
         Span::styled("  Shift+Tab ", Style::default().fg(Color::DarkGray)),
         Span::styled(
-            if app.semantic_available {
-                "mode (FTS/Fuzzy/Semantic)"
-            } else {
-                "mode (FTS/Fuzzy)"
+            {
+                let mode_names: Vec<String> = app
+                    .available_modes
+                    .iter()
+                    .map(|m| match m {
+                        super::app::SearchMode::Fts => "FTS".into(),
+                        super::app::SearchMode::Fuzzy => "Fuzzy".into(),
+                        super::app::SearchMode::Semantic => "Semantic".into(),
+                        super::app::SearchMode::Llm(b) => format!("LLM({})", b.name),
+                    })
+                    .collect();
+                format!("mode ({})", mode_names.join("/"))
             },
             Style::default().fg(Color::White),
         ),
@@ -532,23 +545,23 @@ fn draw_help_popup(f: &mut Frame, area: Rect) {
             Style::default().fg(Color::Yellow),
         )),
         Line::from(Span::styled(
-            "       kalkulator           single keyword",
+            "       shopping                single keyword",
             Style::default().fg(Color::White),
         )),
         Line::from(Span::styled(
-            "       kalkulator b2b       any of these words (OR)",
+            "       shopping assistant      any of these words (OR)",
             Style::default().fg(Color::White),
         )),
         Line::from(Span::styled(
-            "       +kalkulator +b2b     all words required (AND)",
+            "       +shopping +assistant    all words required (AND)",
             Style::default().fg(Color::White),
         )),
         Line::from(Span::styled(
-            "       \"kalkulator b2b\"     exact phrase",
+            "       \"shopping assistant\"    exact phrase",
             Style::default().fg(Color::White),
         )),
         Line::from(Span::styled(
-            "       kalkulat*            prefix/wildcard",
+            "       shopp*                  prefix wildcard",
             Style::default().fg(Color::White),
         )),
         Line::from(""),
@@ -588,6 +601,30 @@ fn draw_help_popup(f: &mut Frame, area: Rect) {
             Style::default().fg(Color::Yellow),
         )),
         Line::from(""),
+        Line::from(vec![
+            Span::styled("   LLM", Style::default().fg(Color::Yellow)),
+            Span::styled(
+                " — re-rank via installed AI CLI tools",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]),
+        Line::from(Span::styled(
+            "     FTS narrows candidates, then LLM re-ranks by relevance.",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "     Press Enter to search (not instant, calls LLM).",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "     Detected tools: claude, opencode, copilot (if installed)",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(Span::styled(
+            "     Model: set SESSFIND_LLM_MODEL env var (default: haiku)",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(""),
         Line::from(Span::styled(
             " Keybindings:",
             Style::default()
@@ -600,7 +637,7 @@ fn draw_help_popup(f: &mut Frame, area: Rect) {
             Style::default().fg(Color::White),
         )),
         Line::from(Span::styled(
-            "   Shift+Tab     cycle search mode (FTS / Fuzzy / Semantic)",
+            "   Shift+Tab     cycle search mode (FTS / Fuzzy / LLM...)",
             Style::default().fg(Color::White),
         )),
         Line::from(Span::styled(
