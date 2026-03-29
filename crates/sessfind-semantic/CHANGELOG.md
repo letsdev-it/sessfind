@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/letsdev-it/sessfind/compare/sessfind-semantic-v0.1.1...sessfind-semantic-v0.1.2) - 2026-03-29
+
+### Fixed
+
+- resolve clippy warnings for Rust 1.94
+- bump MSRV to 1.88 and correct sessfind-common dep version
+
 ## [0.1.1](https://github.com/letsdev-it/sessfind/compare/sessfind-semantic-v0.1.0...sessfind-semantic-v0.1.1) - 2026-03-29
 
 ### Other
