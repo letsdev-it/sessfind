@@ -1,5 +1,5 @@
 [package]
-name = "session-seek"
+name = "sessfind"
 version = "0.1.0"
 edition = "2024"
 description = "Search past AI coding assistant sessions (Claude Code, OpenCode, Copilot)"

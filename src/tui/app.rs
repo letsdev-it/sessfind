@@ -12,7 +12,7 @@ pub enum SearchMode {
 impl SearchMode {
     pub fn label(&self) -> &'static str {
         match self {
-            SearchMode::Fts => "FTS",
+            SearchMode::Fts => "Full-Text Search",
             SearchMode::Fuzzy => "Fuzzy",
         }
     }
@@ -42,6 +42,7 @@ pub struct App<'a> {
     pub focus: Focus,
     pub should_quit: bool,
     pub resume_session: Option<(String, Source)>,
+    pub show_help: bool,
     engine: &'a IndexEngine,
     all_chunks: Vec<SearchResult>,
     cached_session_id: Option<String>,
@@ -65,6 +66,7 @@ impl<'a> App<'a> {
             focus: Focus::Search,
             should_quit: false,
             resume_session: None,
+            show_help: false,
             engine,
             all_chunks,
             cached_session_id: None,

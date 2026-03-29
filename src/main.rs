@@ -1,9 +1,9 @@
 mod config;
 mod indexer;
-mod interactive;
 mod models;
 mod search;
 mod sources;
+mod tui;
 
 use anyhow::Result;
 use chrono::{NaiveDate, TimeZone, Utc};
@@ -16,10 +16,10 @@ use crate::sources::opencode::OpenCodeSource;
 use crate::sources::SessionSource;
 
 #[derive(Parser)]
-#[command(name = "session-seek", about = "Search past AI coding assistant sessions")]
+#[command(name = "sessfind", about = "Search past AI coding assistant sessions")]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -33,7 +33,7 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
-    /// Search indexed sessions
+    /// Search indexed sessions (CLI mode)
     Search {
         /// Search query
         query: String,
@@ -58,8 +58,6 @@ enum Commands {
         /// Session ID (from search results)
         session_id: String,
     },
-    /// Interactive fuzzy search (TUI)
-    Browse,
     /// Show index statistics
     Stats,
 }
@@ -95,7 +93,18 @@ fn main() -> Result<()> {
     let data_dir = config::data_dir();
     let engine = IndexEngine::open(&data_dir)?;
 
-    match cli.command {
+    let command = match cli.command {
+        Some(cmd) => cmd,
+        None => {
+            // Default: launch TUI
+            if let Some(resume_cmd) = tui::run(&engine)? {
+                exec_resume(&resume_cmd)?;
+            }
+            return Ok(());
+        }
+    };
+
+    match command {
         Commands::Index { source, force } => {
             let sources = get_sources(&source);
             for src in &sources {
@@ -137,7 +146,6 @@ fn main() -> Result<()> {
                 return Ok(());
             }
 
-            // Header
             println!(
                 "\x1b[1m{:<6} {:<10} {:<30} {:<12} {}\x1b[0m",
                 "Score", "Source", "Project", "Date", "Preview"
@@ -162,10 +170,9 @@ fn main() -> Result<()> {
                 );
             }
 
-            // Show session IDs for `show` command
             println!();
             println!(
-                "\x1b[90mUse `session-seek show <SESSION_ID>` to view full session.\x1b[0m"
+                "\x1b[90mUse `sessfind show <SESSION_ID>` to view full session.\x1b[0m"
             );
             let unique_sessions: Vec<_> = {
                 let mut seen = std::collections::HashSet::new();
@@ -183,13 +190,9 @@ fn main() -> Result<()> {
                 );
             }
         }
-        Commands::Browse => {
-            interactive::run_interactive(&engine)?;
-        }
         Commands::Show { session_id } => {
             let chunks = engine.get_session_chunks(&session_id)?;
             if chunks.is_empty() {
-                // Try partial match
                 eprintln!("No session found with ID: {session_id}");
                 eprintln!("Tip: Use the full session ID from search results.");
                 return Ok(());
@@ -213,7 +216,6 @@ fn main() -> Result<()> {
             println!();
 
             for chunk in &chunks {
-                // Color USER: and ASSISTANT: prefixes
                 for line in chunk.snippet.lines() {
                     if line.starts_with("USER:") {
                         println!("\x1b[32m{}\x1b[0m", line);
@@ -248,6 +250,15 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn exec_resume(cmd: &[String]) -> Result<()> {
+    use std::os::unix::process::CommandExt;
+    let mut command = std::process::Command::new(&cmd[0]);
+    command.args(&cmd[1..]);
+    // Replace current process with the resume command
+    let err = command.exec();
+    Err(anyhow::anyhow!("Failed to exec {}: {err}", cmd[0]))
 }
 
 fn truncate_project(project: &str, max: usize) -> String {

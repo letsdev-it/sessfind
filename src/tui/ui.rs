@@ -1,0 +1,632 @@
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
+use ratatui::Frame;
+
+use super::app::{App, Focus};
+
+/// Brand accent color #818CF8
+const ACCENT: Color = Color::Rgb(129, 140, 248);
+/// Lighter tint for "find" — same hue, higher lightness
+const ACCENT2: Color = Color::Rgb(192, 198, 252);
+/// Dot on `i` in the logo (`▀▀` on row 1, above the stem)
+const ACCENT_ORANGE: Color = Color::Rgb(251, 146, 60);
+
+/// Compact `sessfind` (half-blocks); `sess` = accent, `find` = accent2. No shadow.
+const BANNER_LINES: [&str; 5] = [
+    "                          ▄▄              ▄▄ ",
+    "                         ██  ▀▀           ██ ",
+    "▄█▀▀▀ ▄█▀█▄ ▄█▀▀▀ ▄█▀▀▀ ▀██▀ ██  ████▄ ▄████ ",
+    "▀███▄ ██▄█▀ ▀███▄ ▀███▄  ██  ██  ██ ██ ██ ██ ",
+    "▄▄▄█▀ ▀█▄▄▄ ▄▄▄█▀ ▄▄▄█▀  ██  ██▄ ██ ██ ▀████ ",
+];
+
+/// First column (0-based) tinted with `ACCENT2` (`find`).
+const BANNER_FIND_START_COL: usize = 24;
+/// Banner row index (0-based) and columns for the orange `i` dot (`▀▀`).
+const BANNER_I_DOT_ROW: usize = 1;
+const BANNER_I_DOT_COLS: std::ops::RangeInclusive<usize> = 29..=30;
+
+pub fn draw(f: &mut Frame, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(7),      // banner: 5 logo + blank + subtitle (tight; no extra pad)
+            Constraint::Min(5),        // main area
+            Constraint::Length(3),      // input bar
+            Constraint::Length(1),      // status bar
+        ])
+        .split(f.area());
+
+    draw_banner(f, chunks[0]);
+    draw_main_area(f, app, chunks[1]);
+    draw_input_bar(f, app, chunks[2]);
+    draw_status_bar(f, app, chunks[3]);
+
+    if app.show_help {
+        draw_help_popup(f, f.area());
+    }
+}
+
+fn draw_banner(f: &mut Frame, area: Rect) {
+    let mut lines: Vec<Line> = Vec::new();
+
+    for row in 0..BANNER_LINES.len() {
+        let fg_line: Vec<char> = BANNER_LINES[row].chars().collect();
+
+        if fg_line.is_empty() {
+            lines.push(Line::from(""));
+            continue;
+        }
+
+        let mut spans: Vec<Span> = Vec::new();
+        let mut current_text = String::new();
+        let mut current_color: Option<Color> = None;
+
+        for i in 0..fg_line.len() {
+            let ch = fg_line[i];
+            let ink = ch != ' ';
+
+            let fg_color = if row == BANNER_I_DOT_ROW
+                && BANNER_I_DOT_COLS.contains(&i)
+                && ch == '▀'
+            {
+                ACCENT_ORANGE
+            } else if i < BANNER_FIND_START_COL {
+                ACCENT
+            } else {
+                ACCENT2
+            };
+            let (out_ch, color) = if ink {
+                (ch, fg_color)
+            } else {
+                (' ', Color::Reset)
+            };
+
+            if current_color == Some(color) {
+                current_text.push(out_ch);
+            } else {
+                if !current_text.is_empty() {
+                    spans.push(Span::styled(
+                        std::mem::take(&mut current_text),
+                        Style::default().fg(current_color.unwrap_or(Color::Reset)),
+                    ));
+                }
+                current_text.push(out_ch);
+                current_color = Some(color);
+            }
+        }
+
+        if !current_text.is_empty() {
+            spans.push(Span::styled(
+                current_text,
+                Style::default().fg(current_color.unwrap_or(Color::Reset)),
+            ));
+        }
+
+        lines.push(Line::from(spans));
+    }
+
+    lines.push(Line::from(""));
+
+    lines.push(Line::from(vec![
+        Span::styled(
+            " Session Finder",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "  https://letsdev.it | github.com/letsdev-it/sessfind",
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]));
+
+    let paragraph = Paragraph::new(lines);
+    f.render_widget(paragraph, area);
+}
+
+fn draw_main_area(f: &mut Frame, app: &App, area: Rect) {
+    let panes = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(40),
+            Constraint::Percentage(60),
+        ])
+        .split(area);
+
+    draw_results_list(f, app, panes[0]);
+    draw_detail_pane(f, app, panes[1]);
+}
+
+fn draw_results_list(f: &mut Frame, app: &App, area: Rect) {
+    let border_style = if app.focus == Focus::Results {
+        Style::default().fg(ACCENT)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    // Split into list area + fixed info line at bottom
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(3),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    let list_area = layout[0];
+    let info_area = layout[1];
+
+    let block = Block::default()
+        .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
+        .title(" Sessions ")
+        .border_style(border_style);
+
+    if app.results.is_empty() {
+        let msg = if app.input.is_empty() {
+            "No indexed sessions.\nRun: sessfind index"
+        } else {
+            "No results found."
+        };
+        let p = Paragraph::new(msg)
+            .style(Style::default().fg(Color::DarkGray))
+            .block(block);
+        f.render_widget(p, list_area);
+
+        // Empty info line with bottom border
+        let info_block = Block::default()
+            .borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT)
+            .border_style(border_style);
+        f.render_widget(info_block, info_area);
+        return;
+    }
+
+    let items: Vec<ListItem> = app
+        .results
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let source_color = match r.source {
+                crate::models::Source::ClaudeCode => Color::Magenta,
+                crate::models::Source::OpenCode => Color::Cyan,
+                crate::models::Source::Copilot => Color::Yellow,
+            };
+
+            let date = r.timestamp.format("%Y-%m-%d %H:%M");
+            let project = truncate_end(&short_project(&r.project), 16);
+
+            let style = if i == app.selected {
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+
+            let date_color = if i == app.selected {
+                Color::Gray
+            } else {
+                Color::DarkGray
+            };
+
+            let line = Line::from(vec![
+                Span::styled(
+                    format!(" {:<9}", r.source.as_str()),
+                    Style::default().fg(source_color),
+                ),
+                Span::styled(
+                    format!("{:<15} ", project),
+                    Style::default().fg(Color::White),
+                ),
+                Span::styled(
+                    format!("{}", date),
+                    Style::default().fg(date_color),
+                ),
+            ]);
+
+            ListItem::new(line).style(style)
+        })
+        .collect();
+
+    // Compute offset to keep selected visible
+    let visible_height = list_area.height.saturating_sub(2) as usize; // minus top border + padding
+    let offset = if app.selected >= visible_height {
+        app.selected - visible_height + 1
+    } else {
+        0
+    };
+
+    let list = List::new(items[offset..].to_vec()).block(block);
+    f.render_widget(list, list_area);
+
+    // Fixed info line at bottom with bottom border
+    let count = app.results.len();
+    let limit_info = if app.input.is_empty() {
+        format!(" {} sessions | date: last activity", count)
+    } else {
+        format!(" {} results (max 50) | date: last activity", count)
+    };
+
+    let info_line = Paragraph::new(Line::from(Span::styled(
+        limit_info,
+        Style::default().fg(Color::DarkGray),
+    )))
+    .block(
+        Block::default()
+            .borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT)
+            .border_style(border_style),
+    );
+    f.render_widget(info_line, info_area);
+}
+
+fn draw_detail_pane(f: &mut Frame, app: &App, area: Rect) {
+    let border_style = Style::default().fg(Color::DarkGray);
+
+    if app.results.is_empty() {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Details ")
+            .border_style(border_style);
+        let p = Paragraph::new("").block(block);
+        f.render_widget(p, area);
+        return;
+    }
+
+    // Split: scrollable content on top, fixed resume hint at bottom
+    let detail_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(3),       // scrollable content
+            Constraint::Length(2),     // fixed resume hint + bottom border
+        ])
+        .split(area);
+
+    let content_area = detail_layout[0];
+    let hint_area = detail_layout[1];
+
+    let block = Block::default()
+        .borders(Borders::TOP | Borders::RIGHT | Borders::LEFT)
+        .title(" Details ")
+        .border_style(border_style);
+
+    let selected = &app.results[app.selected];
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Metadata
+    let source_color = match selected.source {
+        crate::models::Source::ClaudeCode => Color::Magenta,
+        crate::models::Source::OpenCode => Color::Cyan,
+        crate::models::Source::Copilot => Color::Yellow,
+    };
+
+    lines.push(Line::from(vec![
+        Span::styled(" Source:  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(selected.source.as_str(), Style::default().fg(source_color)),
+    ]));
+
+    lines.push(Line::from(vec![
+        Span::styled(" Session: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(&selected.session_id, Style::default().fg(Color::White)),
+    ]));
+
+    lines.push(Line::from(vec![
+        Span::styled(" Project: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(&selected.project, Style::default().fg(Color::White)),
+    ]));
+
+    lines.push(Line::from(vec![
+        Span::styled(" Date:    ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            selected.timestamp.format("%Y-%m-%d %H:%M").to_string(),
+            Style::default().fg(Color::White),
+        ),
+    ]));
+
+    if let Some(title) = &selected.title {
+        lines.push(Line::from(vec![
+            Span::styled(" Title:   ", Style::default().fg(Color::DarkGray)),
+            Span::styled(title, Style::default().fg(Color::White)),
+        ]));
+    }
+
+    lines.push(Line::from(vec![
+        Span::styled(" Method:  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            app.search_mode.label(),
+            Style::default().fg(Color::Green),
+        ),
+        Span::styled(
+            format!("  Score: {:.2}", selected.score),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]));
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " ─── Content ───",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+
+    // Content from detail_chunks
+    for chunk in &app.detail_chunks {
+        for text_line in chunk.snippet.lines() {
+            let line = if text_line.starts_with("USER:") {
+                Line::from(Span::styled(
+                    format!(" {text_line}"),
+                    Style::default().fg(Color::Green),
+                ))
+            } else if text_line.starts_with("ASSISTANT:") {
+                Line::from(Span::styled(
+                    format!(" {text_line}"),
+                    Style::default().fg(Color::Blue),
+                ))
+            } else if text_line.starts_with("[tools:") {
+                Line::from(Span::styled(
+                    format!(" {text_line}"),
+                    Style::default().fg(Color::DarkGray),
+                ))
+            } else {
+                Line::from(format!(" {text_line}"))
+            };
+            lines.push(line);
+        }
+        lines.push(Line::from(""));
+    }
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false })
+        .scroll((app.detail_scroll as u16, 0));
+
+    f.render_widget(paragraph, content_area);
+
+    // Fixed resume hint at bottom with bottom border
+    let hint = Paragraph::new(Line::from(Span::styled(
+        " Enter → resume this session",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::ITALIC),
+    )))
+    .block(
+        Block::default()
+            .borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT)
+            .border_style(border_style),
+    );
+
+    f.render_widget(hint, hint_area);
+}
+
+fn draw_input_bar(f: &mut Frame, app: &App, area: Rect) {
+    let border_style = if app.focus == Focus::Search {
+        Style::default().fg(ACCENT)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let mode_label = format!("[{}]", app.search_mode.label());
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style);
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let input_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(10),
+            Constraint::Length(mode_label.len() as u16 + 1),
+        ])
+        .split(inner);
+
+    // Search input
+    let input_text = Line::from(vec![
+        Span::styled("search> ", Style::default().fg(Color::DarkGray)),
+        Span::styled(&app.input, Style::default().fg(Color::White)),
+    ]);
+    let input_widget = Paragraph::new(input_text);
+    f.render_widget(input_widget, input_layout[0]);
+
+    // Mode badge
+    let mode_widget = Paragraph::new(Span::styled(
+        &mode_label,
+        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+    ));
+    f.render_widget(mode_widget, input_layout[1]);
+
+    // Show cursor
+    if app.focus == Focus::Search && !app.show_help {
+        let cursor_x = input_layout[0].x + 8 + app.input[..app.cursor_pos].chars().count() as u16;
+        let cursor_y = input_layout[0].y;
+        f.set_cursor_position((cursor_x, cursor_y));
+    }
+}
+
+fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
+    let focus_hint = match app.focus {
+        Focus::Search => "Tab\u{2192}results",
+        Focus::Results => "Tab\u{2192}search",
+    };
+
+    let count = app.results.len();
+    let status = Line::from(vec![
+        Span::styled(
+            format!(" {focus_hint}"),
+            Style::default().fg(ACCENT),
+        ),
+        Span::styled("  \u{2191}\u{2193} ", Style::default().fg(Color::DarkGray)),
+        Span::styled("navigate", Style::default().fg(Color::White)),
+        Span::styled("  Enter ", Style::default().fg(Color::DarkGray)),
+        Span::styled("resume", Style::default().fg(Color::White)),
+        Span::styled("  Esc ", Style::default().fg(Color::DarkGray)),
+        Span::styled("quit", Style::default().fg(Color::White)),
+        Span::styled("  Shift+Tab ", Style::default().fg(Color::DarkGray)),
+        Span::styled("mode", Style::default().fg(Color::White)),
+        Span::styled("  ? ", Style::default().fg(Color::DarkGray)),
+        Span::styled("help", Style::default().fg(Color::White)),
+        Span::styled(
+            format!("  {count} sessions"),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]);
+
+    let bar = Paragraph::new(status).style(Style::default().bg(Color::Black));
+    f.render_widget(bar, area);
+}
+
+fn draw_help_popup(f: &mut Frame, area: Rect) {
+    let help_text = vec![
+        Line::from(Span::styled(
+            " Session Finder - Help",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            " Search Modes (Shift+Tab to switch):",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("   FTS (Full-Text Search)", Style::default().fg(Color::Green)),
+            Span::styled(" — tantivy BM25 ranking", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(Span::styled(
+            "     Keyword-based search with relevance scoring.",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "     Best for finding specific terms or phrases.",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "     Query syntax:",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(Span::styled(
+            "       kalkulator           single keyword",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "       kalkulator b2b       any of these words (OR)",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "       +kalkulator +b2b     all words required (AND)",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "       \"kalkulator b2b\"     exact phrase",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "       kalkulat*            prefix/wildcard",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("   Fuzzy", Style::default().fg(Color::Green)),
+            Span::styled(
+                " — case-insensitive substring match",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]),
+        Line::from(Span::styled(
+            "     Searches in session content, project name, and title.",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "     Useful when FTS doesn't find what you need.",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            " Keybindings:",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "   Tab           switch focus between search and results",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "   Shift+Tab     cycle search mode (FTS / Fuzzy)",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "   Up/Down, j/k  navigate results list",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "   PgUp/PgDn     scroll detail pane",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "   Enter         resume selected session",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "   Ctrl+U        clear search input",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "   Esc           quit (or close this help)",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            " Press Esc or ? to close",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    // Center popup: ~60 wide, height = lines + 2 (borders)
+    let popup_w = 60u16.min(area.width.saturating_sub(4));
+    let popup_h = (help_text.len() as u16 + 2).min(area.height.saturating_sub(2));
+    let x = (area.width.saturating_sub(popup_w)) / 2;
+    let y = (area.height.saturating_sub(popup_h)) / 2;
+    let popup_area = Rect::new(x, y, popup_w, popup_h);
+
+    f.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Help ")
+        .border_style(Style::default().fg(ACCENT));
+
+    let help = Paragraph::new(help_text)
+        .block(block)
+        .wrap(Wrap { trim: false });
+
+    f.render_widget(help, popup_area);
+}
+
+fn short_project(project: &str) -> String {
+    // Extract last path component
+    project
+        .rsplit('/')
+        .find(|s| !s.is_empty())
+        .unwrap_or(project)
+        .to_string()
+}
+
+fn truncate_end(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        s.to_string()
+    } else {
+        let truncated: String = chars[..max - 1].iter().collect();
+        format!("{truncated}\u{2026}")
+    }
+}

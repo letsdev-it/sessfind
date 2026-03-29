@@ -1261,7 +1261,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "session-seek"
+name = "sessfind"
 version = "0.1.0"
 dependencies = [
  "anyhow",

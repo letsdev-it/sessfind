@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::Path;
 use tantivy::collector::TopDocs;
-use tantivy::query::QueryParser;
+use tantivy::query::{AllQuery, BooleanQuery, EmptyQuery, Occur, Query, QueryParser, RegexQuery};
 use tantivy::schema::*;
 use tantivy::{DateTime as TantivyDateTime, Index, IndexWriter};
 
@@ -135,8 +135,7 @@ impl IndexEngine {
         let searcher = reader.searcher();
 
         let text_field = self.schema.get_field("text").unwrap();
-        let query_parser = QueryParser::for_index(&self.index, vec![text_field]);
-        let query = query_parser.parse_query(&params.query)?;
+        let query = parse_fts_user_query(&self.index, text_field, &params.query)?;
 
         let top_docs = searcher.search(&query, &TopDocs::with_limit(params.limit * 3))?;
 
@@ -370,12 +369,195 @@ impl IndexEngine {
     }
 }
 
+/// Use simple OR-of-tokens parsing (supports trailing `*` per token). Full tantivy grammar when
+/// boolean / field / grouping syntax is present.
+fn should_use_simple_or_split(query: &str) -> bool {
+    let upper = query.to_ascii_uppercase();
+    if upper.contains(" AND ") || upper.contains(" OR ") || upper.contains(" NOT ") {
+        return false;
+    }
+    if query.contains('(') || query.contains(')') {
+        return false;
+    }
+    if query.contains(':') {
+        return false;
+    }
+    true
+}
+
+/// Split on ASCII whitespace outside of `"` / `'`, honoring backslash escapes inside quotes.
+fn split_fts_tokens_outside_quotes(query: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut buf = String::new();
+    let mut in_dq = false;
+    let mut in_sq = false;
+    let mut escape = false;
+
+    for c in query.chars() {
+        if escape {
+            buf.push(c);
+            escape = false;
+            continue;
+        }
+        if (in_dq || in_sq) && c == '\\' {
+            escape = true;
+            buf.push(c);
+            continue;
+        }
+        match c {
+            '"' if !in_sq => {
+                in_dq = !in_dq;
+                buf.push(c);
+            }
+            '\'' if !in_dq => {
+                in_sq = !in_sq;
+                buf.push(c);
+            }
+            c if c.is_whitespace() && !in_dq && !in_sq => {
+                if !buf.is_empty() {
+                    parts.push(std::mem::take(&mut buf));
+                }
+            }
+            _ => buf.push(c),
+        }
+    }
+    if !buf.is_empty() {
+        parts.push(buf);
+    }
+    parts
+}
+
+fn strip_leading_occur(s: &str) -> (Occur, &str) {
+    let s = s.trim_start();
+    if let Some(rest) = s.strip_prefix('+') {
+        (Occur::Must, rest.trim_start())
+    } else if let Some(rest) = s.strip_prefix('-') {
+        (Occur::MustNot, rest.trim_start())
+    } else {
+        (Occur::Should, s)
+    }
+}
+
+fn is_unquoted_trailing_star_token(s: &str) -> bool {
+    let t = s.trim();
+    if t.is_empty() {
+        return false;
+    }
+    if t.starts_with('"') || t.starts_with('\'') {
+        return false;
+    }
+    t.ends_with('*') && !t[..t.len() - 1].contains('*')
+}
+
+fn escape_fst_regex_literal(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            '\\' | '.' | '^' | '$' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' => {
+                out.push('\\');
+                out.push(c);
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn clause_string_for_parser(occur: Occur, body: &str) -> String {
+    match occur {
+        Occur::Must => format!("+{body}"),
+        Occur::MustNot => format!("-{body}"),
+        Occur::Should => body.to_string(),
+    }
+}
+
+/// Build tantivy query; `token*` (suffix `*` only) becomes a regex prefix match on indexed terms.
+fn parse_fts_user_query(index: &Index, text_field: Field, query: &str) -> Result<Box<dyn Query>> {
+    let query = query.trim();
+    let query_parser = QueryParser::for_index(index, vec![text_field]);
+
+    if query.is_empty() {
+        return Ok(Box::new(EmptyQuery));
+    }
+
+    if !should_use_simple_or_split(query) {
+        return Ok(Box::new(query_parser.parse_query(query)?));
+    }
+
+    let tokens = split_fts_tokens_outside_quotes(query);
+    if tokens.is_empty() {
+        return Ok(Box::new(EmptyQuery));
+    }
+
+    let mut any_star = false;
+    for t in &tokens {
+        let (_, body) = strip_leading_occur(t);
+        if is_unquoted_trailing_star_token(body) {
+            any_star = true;
+            break;
+        }
+    }
+
+    if !any_star {
+        return Ok(Box::new(query_parser.parse_query(query)?));
+    }
+
+    let mut subs: Vec<(Occur, Box<dyn Query>)> = Vec::with_capacity(tokens.len());
+    for raw in tokens {
+        let (occur, body) = strip_leading_occur(&raw);
+        let body = body.trim();
+        if body.is_empty() {
+            continue;
+        }
+
+        if is_unquoted_trailing_star_token(body) {
+            let sub: Box<dyn Query> = {
+                let base = &body[..body.len() - 1];
+                if base.is_empty() {
+                    Box::new(AllQuery)
+                } else {
+                    let pat = format!(
+                        "^{}.*",
+                        escape_fst_regex_literal(&base.to_lowercase())
+                    );
+                    Box::new(
+                        RegexQuery::from_pattern(&pat, text_field)
+                            .map_err(|e| anyhow::anyhow!("regex query: {e}"))?,
+                    )
+                }
+            };
+            subs.push((occur, sub));
+        } else {
+            let sub = query_parser
+                .parse_query(&clause_string_for_parser(occur, body))
+                .map_err(|e| anyhow::anyhow!(e))?;
+            subs.push((Occur::Should, sub));
+        }
+    }
+
+    if subs.is_empty() {
+        return Ok(Box::new(EmptyQuery));
+    }
+    if subs.len() == 1 {
+        return Ok(subs.into_iter().next().unwrap().1);
+    }
+    Ok(Box::new(BooleanQuery::new(subs)))
+}
+
 fn make_snippet(text: &str, query: &str, max_len: usize) -> String {
     let chars: Vec<char> = text.chars().collect();
     let lower_text: Vec<char> = text.to_lowercase().chars().collect();
     let query_terms: Vec<Vec<char>> = query
         .split_whitespace()
-        .map(|t| t.to_lowercase().chars().collect())
+        .map(|t| {
+            let t = t.trim_start_matches(|c| c == '+' || c == '-');
+            let t = if is_unquoted_trailing_star_token(t) {
+                t[..t.len() - 1].to_lowercase()
+            } else {
+                t.to_lowercase()
+            };
+            t.chars().collect::<Vec<_>>()
+        })
         .collect();
 
     // Find first occurrence of any query term (char-based position)
