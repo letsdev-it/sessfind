@@ -4,9 +4,9 @@
 
 # sessfind
 
-**Search and resume past AI coding assistant sessions**
+**CLI tool to search and resume AI sessions across GitHub Copilot, Claude Code, and OpenCode.**
 
-*Claude Code · OpenCode · GitHub Copilot*
+*GitHub Copilot · Claude Code · OpenCode*
 
 [letsdev.it](https://letsdev.it)
 
@@ -16,7 +16,7 @@
 
 ## What is sessfind?
 
-`sessfind` is a single-binary CLI tool that indexes and searches your AI coding assistant sessions across multiple tools. Ever had a conversation about a specific topic days ago and can't find it? sessfind solves that.
+`sessfind` indexes and searches your AI assistant sessions from **GitHub Copilot**, **Claude Code**, and **OpenCode** in one place, and lets you **resume** a session from the UI or CLI. Ever had a conversation about a topic days ago and could not find it? `sessfind` is for that.
 
 **Features:**
 
@@ -31,16 +31,23 @@
 
 | Source | Session Location | Resume Command |
 |--------|-----------------|----------------|
+| **GitHub Copilot** | `~/.copilot/session-state/*/events.jsonl` | `copilot --resume=SESSION_ID` |
 | **Claude Code** | `~/.claude/projects/*/` | `claude --resume SESSION_ID` |
 | **OpenCode** | `~/.local/share/opencode/opencode.db` | `opencode --session SESSION_ID` |
-| **GitHub Copilot** | `~/.copilot/session-state/*/events.jsonl` | `copilot --resume=SESSION_ID` |
 
 ## Installation
 
-### From source (recommended)
+### From crates.io
 
 ```bash
-# Requires Rust 1.85+ (edition 2024)
+cargo install sessfind
+```
+
+Requires Rust **1.85+** (edition 2024).
+
+### From source
+
+```bash
 git clone https://github.com/letsdev-it/sessfind.git
 cd sessfind
 cargo install --path .

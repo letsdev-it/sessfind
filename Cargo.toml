@@ -2,7 +2,13 @@
 name = "sessfind"
 version = "0.1.0"
 edition = "2024"
-description = "Search past AI coding assistant sessions (Claude Code, OpenCode, Copilot)"
+rust-version = "1.85"
+description = "CLI tool to search and resume AI sessions across Github Copilot, Claude Code, and OpenCode."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/letsdev-it/sessfind"
+keywords = ["cli", "search", "tui", "ai", "sessions"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1"
