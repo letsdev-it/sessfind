@@ -1,6 +1,6 @@
 [package]
 name = "sessfind"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 rust-version = "1.85"
 description = "CLI tool to search and resume AI sessions across Github Copilot, Claude Code, and OpenCode."
