@@ -45,7 +45,7 @@
 cargo install sessfind
 ```
 
-Requires Rust **1.85+**. See [Installation docs](https://letsdev-it.github.io/sessfind/getting-started/installation/) for prebuilt binaries and other options.
+Requires Rust **1.88+**. See [Installation docs](https://letsdev-it.github.io/sessfind/getting-started/installation/) for prebuilt binaries and other options.
 
 ## Quick Start
 

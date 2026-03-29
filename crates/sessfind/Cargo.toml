@@ -2,7 +2,7 @@
 name = "sessfind"
 version = "0.3.2"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "CLI tool to search and resume AI sessions across Github Copilot, Claude Code, and OpenCode."
 license = "MIT"
 readme = "../../README.md"
@@ -11,7 +11,7 @@ keywords = ["cli", "search", "tui", "ai", "sessions"]
 categories = ["command-line-utilities"]
 
 [dependencies]
-sessfind-common = "0.1.0"
+sessfind-common = "0.2.0"
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
