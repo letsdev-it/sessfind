@@ -1,10 +1,8 @@
 use std::path::PathBuf;
 
-pub fn data_dir() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("sessfind")
-}
+pub use sessfind_common::CHUNK_MAX_CHARS;
+pub use sessfind_common::CHUNK_MIN_CHARS;
+pub use sessfind_common::data_dir;
 
 pub fn claude_projects_dir() -> PathBuf {
     dirs::home_dir()
@@ -29,6 +27,3 @@ pub fn copilot_session_dir() -> PathBuf {
         .join(".copilot")
         .join("session-state")
 }
-
-pub const CHUNK_MAX_CHARS: usize = 6000;
-pub const CHUNK_MIN_CHARS: usize = 50;

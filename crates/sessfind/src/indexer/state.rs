@@ -57,8 +57,7 @@ impl IndexState {
 
     #[allow(dead_code)]
     pub fn clear(&self) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM indexed_sessions", [])?;
+        self.conn.execute("DELETE FROM indexed_sessions", [])?;
         Ok(())
     }
 
@@ -70,11 +69,10 @@ impl IndexState {
                 |row| row.get(0),
             )?
         } else {
-            self.conn.query_row(
-                "SELECT COUNT(*) FROM indexed_sessions",
-                [],
-                |row| row.get(0),
-            )?
+            self.conn
+                .query_row("SELECT COUNT(*) FROM indexed_sessions", [], |row| {
+                    row.get(0)
+                })?
         };
         Ok(count)
     }

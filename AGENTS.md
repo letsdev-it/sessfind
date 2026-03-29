@@ -14,3 +14,7 @@ Examples:
 - `feat(tui): add keyboard shortcut for clearing search`
 - `fix(indexer): skip invalid session files`
 - `chore: bump dependency patch versions`
+
+## Documentation
+
+Always update `README.md` after making user-facing changes (new flags, features, behavior changes, etc.).

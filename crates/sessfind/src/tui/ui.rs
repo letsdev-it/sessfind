@@ -1,8 +1,8 @@
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
-use ratatui::Frame;
 
 use super::app::{App, Focus};
 
@@ -32,10 +32,10 @@ pub fn draw(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(7),      // banner: 5 logo + blank + subtitle (tight; no extra pad)
-            Constraint::Min(5),        // main area
-            Constraint::Length(3),      // input bar
-            Constraint::Length(1),      // status bar
+            Constraint::Length(7), // banner: 5 logo + blank + subtitle (tight; no extra pad)
+            Constraint::Min(5),    // main area
+            Constraint::Length(3), // input bar
+            Constraint::Length(1), // status bar
         ])
         .split(f.area());
 
@@ -52,8 +52,8 @@ pub fn draw(f: &mut Frame, app: &App) {
 fn draw_banner(f: &mut Frame, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
-    for row in 0..BANNER_LINES.len() {
-        let fg_line: Vec<char> = BANNER_LINES[row].chars().collect();
+    for (row, banner_line) in BANNER_LINES.iter().enumerate() {
+        let fg_line: Vec<char> = banner_line.chars().collect();
 
         if fg_line.is_empty() {
             lines.push(Line::from(""));
@@ -64,13 +64,10 @@ fn draw_banner(f: &mut Frame, area: Rect) {
         let mut current_text = String::new();
         let mut current_color: Option<Color> = None;
 
-        for i in 0..fg_line.len() {
-            let ch = fg_line[i];
+        for (i, &ch) in fg_line.iter().enumerate() {
             let ink = ch != ' ';
 
-            let fg_color = if row == BANNER_I_DOT_ROW
-                && BANNER_I_DOT_COLS.contains(&i)
-                && ch == '▀'
+            let fg_color = if row == BANNER_I_DOT_ROW && BANNER_I_DOT_COLS.contains(&i) && ch == '▀'
             {
                 ACCENT_ORANGE
             } else if i < BANNER_FIND_START_COL {
@@ -130,10 +127,7 @@ fn draw_banner(f: &mut Frame, area: Rect) {
 fn draw_main_area(f: &mut Frame, app: &App, area: Rect) {
     let panes = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(40),
-            Constraint::Percentage(60),
-        ])
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(area);
 
     draw_results_list(f, app, panes[0]);
@@ -150,10 +144,7 @@ fn draw_results_list(f: &mut Frame, app: &App, area: Rect) {
     // Split into list area + fixed info line at bottom
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(3),
-            Constraint::Length(1),
-        ])
+        .constraints([Constraint::Min(3), Constraint::Length(1)])
         .split(area);
 
     let list_area = layout[0];
@@ -163,6 +154,26 @@ fn draw_results_list(f: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
         .title(" Sessions ")
         .border_style(border_style);
+
+    if app.semantic_searching {
+        let p = Paragraph::new(Line::from(vec![
+            Span::styled(
+                " Searching semantically",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("...", Style::default().fg(Color::DarkGray)),
+        ]))
+        .block(block);
+        f.render_widget(p, list_area);
+
+        let info_block = Block::default()
+            .borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT)
+            .border_style(border_style);
+        f.render_widget(info_block, info_area);
+        return;
+    }
 
     if app.results.is_empty() {
         let msg = if app.input.is_empty() {
@@ -220,10 +231,7 @@ fn draw_results_list(f: &mut Frame, app: &App, area: Rect) {
                     format!("{:<15} ", project),
                     Style::default().fg(Color::White),
                 ),
-                Span::styled(
-                    format!("{}", date),
-                    Style::default().fg(date_color),
-                ),
+                Span::styled(format!("{}", date), Style::default().fg(date_color)),
             ]);
 
             ListItem::new(line).style(style)
@@ -278,8 +286,8 @@ fn draw_detail_pane(f: &mut Frame, app: &App, area: Rect) {
     let detail_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(3),       // scrollable content
-            Constraint::Length(2),     // fixed resume hint + bottom border
+            Constraint::Min(3),    // scrollable content
+            Constraint::Length(2), // fixed resume hint + bottom border
         ])
         .split(area);
 
@@ -334,10 +342,7 @@ fn draw_detail_pane(f: &mut Frame, app: &App, area: Rect) {
 
     lines.push(Line::from(vec![
         Span::styled(" Method:  ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            app.search_mode.label(),
-            Style::default().fg(Color::Green),
-        ),
+        Span::styled(app.search_mode.label(), Style::default().fg(Color::Green)),
         Span::styled(
             format!("  Score: {:.2}", selected.score),
             Style::default().fg(Color::DarkGray),
@@ -432,10 +437,14 @@ fn draw_input_bar(f: &mut Frame, app: &App, area: Rect) {
     let input_widget = Paragraph::new(input_text);
     f.render_widget(input_widget, input_layout[0]);
 
-    // Mode badge
+    // Mode badge — Cyan for Semantic, Green for others
+    let mode_color = match app.search_mode {
+        super::app::SearchMode::Semantic => Color::Cyan,
+        _ => Color::Green,
+    };
     let mode_widget = Paragraph::new(Span::styled(
         &mode_label,
-        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        Style::default().fg(mode_color).add_modifier(Modifier::BOLD),
     ));
     f.render_widget(mode_widget, input_layout[1]);
 
@@ -455,10 +464,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
 
     let count = app.results.len();
     let status = Line::from(vec![
-        Span::styled(
-            format!(" {focus_hint}"),
-            Style::default().fg(ACCENT),
-        ),
+        Span::styled(format!(" {focus_hint}"), Style::default().fg(ACCENT)),
         Span::styled("  \u{2191}\u{2193} ", Style::default().fg(Color::DarkGray)),
         Span::styled("navigate", Style::default().fg(Color::White)),
         Span::styled("  Enter ", Style::default().fg(Color::DarkGray)),
@@ -466,7 +472,14 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         Span::styled("  Esc ", Style::default().fg(Color::DarkGray)),
         Span::styled("quit", Style::default().fg(Color::White)),
         Span::styled("  Shift+Tab ", Style::default().fg(Color::DarkGray)),
-        Span::styled("mode", Style::default().fg(Color::White)),
+        Span::styled(
+            if app.semantic_available {
+                "mode (FTS/Fuzzy/Semantic)"
+            } else {
+                "mode (FTS/Fuzzy)"
+            },
+            Style::default().fg(Color::White),
+        ),
         Span::styled("  ? ", Style::default().fg(Color::DarkGray)),
         Span::styled("help", Style::default().fg(Color::White)),
         Span::styled(
@@ -496,8 +509,14 @@ fn draw_help_popup(f: &mut Frame, area: Rect) {
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("   FTS (Full-Text Search)", Style::default().fg(Color::Green)),
-            Span::styled(" — tantivy BM25 ranking", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                "   FTS (Full-Text Search)",
+                Style::default().fg(Color::Green),
+            ),
+            Span::styled(
+                " — tantivy BM25 ranking",
+                Style::default().fg(Color::DarkGray),
+            ),
         ]),
         Line::from(Span::styled(
             "     Keyword-based search with relevance scoring.",
@@ -549,6 +568,26 @@ fn draw_help_popup(f: &mut Frame, area: Rect) {
             Style::default().fg(Color::White),
         )),
         Line::from(""),
+        Line::from(vec![
+            Span::styled("   Semantic", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                " — ML embedding similarity (multilingual)",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]),
+        Line::from(Span::styled(
+            "     Finds conceptually similar sessions, not just keywords.",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "     Press Enter to search (not instant, uses ML model).",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(Span::styled(
+            "     Requires: cargo install sessfind-semantic",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(""),
         Line::from(Span::styled(
             " Keybindings:",
             Style::default()
@@ -561,7 +600,7 @@ fn draw_help_popup(f: &mut Frame, area: Rect) {
             Style::default().fg(Color::White),
         )),
         Line::from(Span::styled(
-            "   Shift+Tab     cycle search mode (FTS / Fuzzy)",
+            "   Shift+Tab     cycle search mode (FTS / Fuzzy / Semantic)",
             Style::default().fg(Color::White),
         )),
         Line::from(Span::styled(

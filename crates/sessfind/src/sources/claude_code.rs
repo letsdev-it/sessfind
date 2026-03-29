@@ -136,9 +136,7 @@ fn find_session_files(projects_dir: &Path) -> Vec<PathBuf> {
     {
         let path = entry.path();
         if path.extension().is_some_and(|e| e == "jsonl")
-            && !path
-                .to_str()
-                .is_some_and(|s| s.contains("subagents"))
+            && !path.to_str().is_some_and(|s| s.contains("subagents"))
         {
             files.push(path.to_path_buf());
         }
@@ -202,7 +200,9 @@ impl SessionSource for ClaudeCodeSource {
                     Err(_) => continue,
                 };
 
-                if entry.entry_type.as_deref() == Some("user") || entry.entry_type.as_deref() == Some("assistant") {
+                if entry.entry_type.as_deref() == Some("user")
+                    || entry.entry_type.as_deref() == Some("assistant")
+                {
                     if started_at.is_none() {
                         if let Some(ts) = &entry.timestamp {
                             started_at = ts.parse::<DateTime<Utc>>().ok();

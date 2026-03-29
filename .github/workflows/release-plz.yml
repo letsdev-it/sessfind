@@ -21,8 +21,19 @@ defaults:
     shell: bash
 
 jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
   release-plz-release:
     name: Release-plz release
+    needs: test
     runs-on: ubuntu-latest
     if: ${{ !github.event.repository.fork }}
     permissions:
@@ -92,7 +103,7 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin --tags
-          VERSION=$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)
+          VERSION=$(awk -F '"' '/^version = / { print $2; exit }' crates/sessfind/Cargo.toml)
           TAG="v${VERSION}"
           if ! git rev-parse "$TAG" >/dev/null 2>&1; then
             echo "::error::Expected tag ${TAG} (from Cargo.toml) after release-plz; not found."
@@ -110,10 +121,21 @@ jobs:
           target: ${{ matrix.target }}
         if: ${{ startsWith(matrix.os, 'ubuntu') }}
 
-      - name: Build and upload binary
+      - name: Build and upload sessfind
         uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: sessfind
+          target: ${{ matrix.target }}
+          ref: ${{ steps.meta.outputs.ref }}
+          tar: unix
+          locked: true
+          checksum: sha256
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and upload sessfind-semantic
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: sessfind-semantic
           target: ${{ matrix.target }}
           ref: ${{ steps.meta.outputs.ref }}
           tar: unix
