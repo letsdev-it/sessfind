@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::collections::HashSet;
 
 use crate::indexer::engine::{IndexEngine, SearchParams};
 use crate::llm::{self, LlmBackend};
@@ -350,18 +349,9 @@ pub struct ResumeCommand {
     pub cwd: Option<String>,
 }
 
-fn dedup_by_session(results: &[SearchResult]) -> Vec<SearchResult> {
-    let mut seen = HashSet::new();
-    results
-        .iter()
-        .filter(|r| seen.insert(r.session_id.clone()))
-        .cloned()
-        .collect()
-}
-
 /// Dedup by session, keeping the highest-scoring result per session.
-/// Final results sorted by score descending.
-fn dedup_by_session_best_score(results: &[SearchResult]) -> Vec<SearchResult> {
+/// Final results sorted by score descending, then by timestamp descending.
+fn dedup_by_session(results: &[SearchResult]) -> Vec<SearchResult> {
     let mut best: HashMap<String, SearchResult> = HashMap::new();
     for r in results {
         best.entry(r.session_id.clone())
@@ -377,8 +367,15 @@ fn dedup_by_session_best_score(results: &[SearchResult]) -> Vec<SearchResult> {
         b.score
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| b.timestamp.cmp(&a.timestamp))
     });
     out
+}
+
+/// Dedup by session, keeping the highest-scoring result per session.
+/// Final results sorted by score descending, then by timestamp descending.
+fn dedup_by_session_best_score(results: &[SearchResult]) -> Vec<SearchResult> {
+    dedup_by_session(results)
 }
 
 #[cfg(test)]
