@@ -18,3 +18,6 @@ target
 
 # FastEmbed / ONNX model cache (downloaded locally)
 **/.fastembed_cache/
+
+# MkDocs build output
+site/
