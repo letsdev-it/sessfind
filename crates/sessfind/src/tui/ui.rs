@@ -477,22 +477,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         Span::styled("  Esc ", Style::default().fg(Color::DarkGray)),
         Span::styled("quit", Style::default().fg(Color::White)),
         Span::styled("  Shift+Tab ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            {
-                let mode_names: Vec<String> = app
-                    .available_modes
-                    .iter()
-                    .map(|m| match m {
-                        super::app::SearchMode::Fts => "FTS".into(),
-                        super::app::SearchMode::Fuzzy => "Fuzzy".into(),
-                        super::app::SearchMode::Semantic => "Semantic".into(),
-                        super::app::SearchMode::Llm(b) => format!("LLM({})", b.name),
-                    })
-                    .collect();
-                format!("mode ({})", mode_names.join("/"))
-            },
-            Style::default().fg(Color::White),
-        ),
+        Span::styled("mode", Style::default().fg(Color::White)),
         Span::styled("  ? ", Style::default().fg(Color::DarkGray)),
         Span::styled("help", Style::default().fg(Color::White)),
         Span::styled(
