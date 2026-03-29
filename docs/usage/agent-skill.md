@@ -1,6 +1,6 @@
 # Agent Skill
 
-`sessfind` ships with an **agent skill** that lets AI coding assistants (GitHub Copilot CLI, Claude Code) search and manage your sessions directly during a conversation — no need to leave your AI tool.
+`sessfind` ships with an **agent skill** that lets AI coding assistants (GitHub Copilot CLI, Claude Code, OpenCode) search and manage your sessions directly during a conversation — no need to leave your AI tool.
 
 ## What is an Agent Skill?
 
@@ -16,15 +16,23 @@ The skill handles the full workflow: **search → show → resume**.
 
 The skill file is located in the repository at `skills/sessfind/SKILL.md`.
 
-### GitHub Copilot CLI
+The `~/.claude/skills/` directory is shared by **Claude Code**, **GitHub Copilot CLI**, and **OpenCode**, so installing the skill there makes it available in all three tools at once.
 
-Copy the skill directory to your Copilot skills folder:
+### Copy
 
 ```bash
-cp -r skills/sessfind ~/.copilot/skills/sessfind
+cp -r skills/sessfind ~/.claude/skills/sessfind
 ```
 
-Or add the repository's `skills/` directory as a skill location:
+### Symlink (recommended — stays in sync with the repo)
+
+```bash
+ln -s "$(pwd)/skills/sessfind" ~/.claude/skills/sessfind
+```
+
+### Alternative: add the repo's skill directory
+
+In Copilot CLI or Claude Code, run:
 
 ```
 /skills add
@@ -32,24 +40,9 @@ Or add the repository's `skills/` directory as a skill location:
 
 Then enter the path to the `skills/` directory in this repository.
 
-### Claude Code
-
-Copy the skill directory to your Claude skills folder:
-
-```bash
-cp -r skills/sessfind ~/.claude/skills/sessfind
-```
-
-### Universal (works with both)
-
-```bash
-mkdir -p ~/.agents/skills
-cp -r skills/sessfind ~/.agents/skills/sessfind
-```
-
 ### Verify
 
-In Copilot CLI, run `/skills list` — you should see `sessfind` in the list.
+Run `/skills list` — you should see `sessfind` in the list.
 
 ## What the Skill Can Do
 
