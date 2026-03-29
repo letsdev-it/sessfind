@@ -1,0 +1,85 @@
+site_name: sessfind
+site_url: https://letsdev-it.github.io/sessfind/
+site_description: CLI tool to search and resume AI sessions across GitHub Copilot, Claude Code, and OpenCode
+repo_url: https://github.com/letsdev-it/sessfind
+repo_name: letsdev-it/sessfind
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      media: "(prefers-color-scheme: light)"
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      media: "(prefers-color-scheme: dark)"
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - search.suggest
+    - search.highlight
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quick-start.md
+  - Usage:
+    - Interactive TUI: usage/tui.md
+    - CLI Commands: usage/cli.md
+    - Search Modes: usage/search-modes.md
+    - LLM Configuration: usage/llm-configuration.md
+  - Plugins:
+    - Semantic Search: plugins/semantic-search.md
+  - Architecture:
+    - How It Works: architecture/how-it-works.md
+    - Project Structure: architecture/project-structure.md
+    - Dependencies: architecture/dependencies.md
+  - Contributing: contributing.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/letsdev-it/sessfind
+    - icon: fontawesome/solid/globe
+      link: https://letsdev.it

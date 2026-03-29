@@ -1,6 +1,4 @@
 # https://release-plz.dev/docs/github/quickstart
-# Binaries: same workflow run as release (avoids needing a PAT to trigger `on: release`).
-# https://release-plz.dev/docs/extra/releasing-binaries
 name: Release-plz
 
 on:
@@ -39,11 +37,6 @@ jobs:
     permissions:
       contents: write
       pull-requests: read
-    outputs:
-      releases_created: ${{ steps.release_plz.outputs.releases_created }}
-      # tag_name is the actual tag created by release-plz (e.g. sessfind-v0.2.0); passed to
-      # upload-release-assets so it does not need to reconstruct the tag from Cargo.toml.
-      tag_name: ${{ steps.release_plz.outputs.tag_name }}
     steps:
       - name: Require CARGO_REGISTRY_TOKEN
         run: |
@@ -53,6 +46,13 @@ jobs:
           fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -69,81 +69,8 @@ jobs:
         with:
           command: release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-  # Attach prebuilt archives to the GitHub Release created by release-plz (single-crate tag: vX.Y.Z).
-  upload-release-assets:
-    name: Upload ${{ matrix.target }}
-    needs: release-plz-release
-    if: ${{ !github.event.repository.fork && needs.release-plz-release.outputs.releases_created == 'true' }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    permissions:
-      contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-24.04
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04
-          - target: aarch64-apple-darwin
-            os: macos-26
-          - target: x86_64-apple-darwin
-            os: macos-26-intel
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          # Check out the exact tag produced by release-plz rather than the triggering commit SHA.
-          ref: ${{ needs.release-plz-release.outputs.tag_name }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Resolve release tag
-        id: meta
-        run: |
-          set -euo pipefail
-          # Use the tag name passed from the release-plz-release job; no Cargo.toml parsing needed.
-          TAG="${{ needs.release-plz-release.outputs.tag_name }}"
-          if [ -z "${TAG}" ]; then
-            echo "::error::release-plz did not output tag_name; cannot upload assets."
-            exit 1
-          fi
-          echo "ref=refs/tags/${TAG}" >> "${GITHUB_OUTPUT}"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cross-compilation tools
-        uses: taiki-e/setup-cross-toolchain-action@v1
-        with:
-          target: ${{ matrix.target }}
-        if: ${{ startsWith(matrix.os, 'ubuntu') }}
-
-      - name: Build and upload sessfind
-        uses: taiki-e/upload-rust-binary-action@v1
-        with:
-          bin: sessfind
-          target: ${{ matrix.target }}
-          ref: ${{ steps.meta.outputs.ref }}
-          tar: unix
-          locked: true
-          checksum: sha256
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and upload sessfind-semantic
-        uses: taiki-e/upload-rust-binary-action@v1
-        with:
-          bin: sessfind-semantic
-          target: ${{ matrix.target }}
-          ref: ${{ steps.meta.outputs.ref }}
-          tar: unix
-          locked: true
-          checksum: sha256
-          token: ${{ secrets.GITHUB_TOKEN }}
 
   release-plz-pr:
     name: Release-plz PR

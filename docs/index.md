@@ -10,11 +10,11 @@
 
 [letsdev.it](https://letsdev.it)
 
-![sessfind interactive TUI — split-pane search and session preview](tui.png)
-
-📖 **[Full Documentation](https://letsdev-it.github.io/sessfind/)**
+![sessfind interactive TUI — split-pane search and session preview](https://raw.githubusercontent.com/letsdev-it/sessfind/main/tui.png)
 
 ---
+
+## What is sessfind?
 
 `sessfind` indexes and searches your AI assistant sessions from **GitHub Copilot**, **Claude Code**, and **OpenCode** in one place, and lets you **resume** a session from the UI or CLI. Ever had a conversation about a topic days ago and could not find it? `sessfind` is for that.
 
@@ -27,7 +27,6 @@
 - **LLM search** — agentic search using installed AI CLI tools (Claude Code, OpenCode, Copilot)
 - Resume any session directly from the search results
 - Incremental indexing — only processes new/changed sessions
-- **Automatic indexing** — background watcher re-indexes on session changes ([details](docs/automatic-indexing.md))
 - Zero external runtime dependencies — single static binary
 
 ## Supported Sources
@@ -38,38 +37,24 @@
 | **Claude Code** | `~/.claude/projects/*/` | `claude --resume SESSION_ID` |
 | **OpenCode** | `~/.local/share/opencode/opencode.db` | `opencode --session SESSION_ID` |
 
-## Quick Install
+## Quick Links
 
-```bash
-cargo install sessfind
-```
+<div class="grid cards" markdown>
 
-Requires Rust **1.85+**. See [Installation docs](https://letsdev-it.github.io/sessfind/getting-started/installation/) for prebuilt binaries and other options.
+- :material-download: **[Installation](getting-started/installation.md)**
 
-## Quick Start
+    Install from crates.io, GitHub Releases, or build from source.
 
-```bash
-# 1. Index your sessions
-sessfind index
+- :material-rocket-launch: **[Quick Start](getting-started/quick-start.md)**
 
-# 2. Launch the interactive TUI
-sessfind
-```
+    Index your sessions and launch the TUI in two commands.
 
-Combine both: `sessfind --index`. See [Quick Start docs](https://letsdev-it.github.io/sessfind/getting-started/quick-start/) for more.
+- :material-monitor: **[Interactive TUI](usage/tui.md)**
 
-## Documentation
+    Keybindings, pane layout, and TUI usage guide.
 
-- [Installation](https://letsdev-it.github.io/sessfind/getting-started/installation/)
-- [Interactive TUI & Keybindings](https://letsdev-it.github.io/sessfind/usage/tui/)
-- [CLI Commands](https://letsdev-it.github.io/sessfind/usage/cli/)
-- [Search Modes](https://letsdev-it.github.io/sessfind/usage/search-modes/) (FTS, Fuzzy, LLM, Semantic)
-- [LLM Configuration](https://letsdev-it.github.io/sessfind/usage/llm-configuration/)
-- [Automatic Indexing](docs/automatic-indexing.md) (`sessfind watch`, shell hooks, cron)
-- [Semantic Search Plugin](https://letsdev-it.github.io/sessfind/plugins/semantic-search/)
-- [Architecture & How It Works](https://letsdev-it.github.io/sessfind/architecture/how-it-works/)
-- [Contributing](https://letsdev-it.github.io/sessfind/contributing/)
+- :material-console: **[CLI Commands](usage/cli.md)**
 
-## License
+    Full reference for all CLI commands and flags.
 
-[MIT](LICENSE) © [Let's Dev .IT](https://letsdev.it)
+</div>
