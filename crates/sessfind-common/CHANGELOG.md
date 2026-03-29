@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/letsdev-it/sessfind/compare/sessfind-common-v0.3.0...sessfind-common-v0.4.0) - 2026-03-29
+
+### Added
+
+- add Codex as session source
+
+### Other
+
+- Merge pull request #35 from letsdev-it/release-plz-2026-03-29T22-02-14Z
+- bump all crate versions by minor
+
 ## [0.3.0](https://github.com/letsdev-it/sessfind/compare/sessfind-common-v0.2.1...sessfind-common-v0.3.0) - 2026-03-29
 
 ### Added
