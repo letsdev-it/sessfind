@@ -27,7 +27,7 @@
 - **LLM search** — agentic search using installed AI CLI tools (Claude Code, OpenCode, Copilot)
 - Resume any session directly from the search results
 - Incremental indexing — only processes new/changed sessions
-- **Automatic indexing** — background watcher re-indexes on session changes ([details](docs/automatic-indexing.md))
+- **Automatic indexing** — background watcher re-indexes on session changes ([details](docs/usage/automatic-indexing.md))
 - Zero external runtime dependencies — single static binary
 
 ## Supported Sources
@@ -65,7 +65,7 @@ Combine both: `sessfind --index`. See [Quick Start docs](https://letsdev-it.gith
 - [CLI Commands](https://letsdev-it.github.io/sessfind/usage/cli/)
 - [Search Modes](https://letsdev-it.github.io/sessfind/usage/search-modes/) (FTS, Fuzzy, LLM, Semantic)
 - [LLM Configuration](https://letsdev-it.github.io/sessfind/usage/llm-configuration/)
-- [Automatic Indexing](docs/automatic-indexing.md) (`sessfind watch`, shell hooks, cron)
+- [Automatic Indexing](docs/usage/automatic-indexing.md) (`sessfind watch`, shell hooks, cron)
 - [Semantic Search Plugin](https://letsdev-it.github.io/sessfind/plugins/semantic-search/)
 - [Architecture & How It Works](https://letsdev-it.github.io/sessfind/architecture/how-it-works/)
 - [Contributing](https://letsdev-it.github.io/sessfind/contributing/)
