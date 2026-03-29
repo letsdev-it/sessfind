@@ -68,10 +68,10 @@ impl IndexEngine {
             // use our tokenizer, wipe and recreate so stemming takes effect.
             let needs_rebuild = {
                 let s = existing.schema();
-                let ok = s.get_field("text").ok().map_or(false, |f| {
+                let ok = s.get_field("text").ok().is_some_and(|f| {
                     if let FieldType::Str(ref opts) = *s.get_field_entry(f).field_type() {
                         opts.get_indexing_options()
-                            .map_or(false, |o| o.tokenizer() == TOKENIZER_NAME)
+                            .is_some_and(|o| o.tokenizer() == TOKENIZER_NAME)
                     } else {
                         false
                     }
