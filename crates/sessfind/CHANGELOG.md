@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.4.0...sessfind-v0.4.1) - 2026-03-29
+
+### Fixed
+
+- unify result sorting — score desc, then date desc
+
+### Other
+
+- Merge pull request #31 from letsdev-it/feat/light-mode-fix
+
+## [0.4.0](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.3.3...sessfind-v0.4.0) - 2026-03-29
+
+### Added
+
+- *(tui)* widen help popup and add scroll support
+- *(indexer)* add English stemming to FTS tokenizer
+
+### Fixed
+
+- resolve clippy warning for map_or → is_some_and
+- *(indexer)* fix prefix queries using PhrasePrefixQuery
+- *(tui)* improve light mode visibility and narrow left panel
+
+### Other
+
+- bump sessfind version to 0.4.0
+- *(tui)* shorten Shift+Tab hint in status bar
+
 ## [0.3.3](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.3.2...sessfind-v0.3.3) - 2026-03-29
 
 ### Added
