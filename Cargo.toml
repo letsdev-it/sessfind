@@ -9,3 +9,6 @@ resolver = "3"
 [profile.release]
 lto = true
 strip = true
+
+[patch.crates-io]
+sessfind-common = { path = "crates/sessfind-common" }

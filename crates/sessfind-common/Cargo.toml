@@ -3,7 +3,9 @@ name = "sessfind-common"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-publish = false
+description = "Shared types and utilities for the sessfind workspace."
+license = "MIT"
+repository = "https://github.com/letsdev-it/sessfind"
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
