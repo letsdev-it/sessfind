@@ -41,12 +41,12 @@ pub fn run(engine: &IndexEngine) -> Result<Option<ResumeCommand>> {
             continue;
         }
 
-        if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                // Ignore key release events on some terminals
-                if key.kind == crossterm::event::KeyEventKind::Press {
-                    input::handle_key(&mut app, key);
-                }
+        if event::poll(Duration::from_millis(50))?
+            && let Event::Key(key) = event::read()?
+        {
+            // Ignore key release events on some terminals
+            if key.kind == crossterm::event::KeyEventKind::Press {
+                input::handle_key(&mut app, key);
             }
         }
 

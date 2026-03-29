@@ -268,10 +268,10 @@ impl SessionSource for ClaudeCodeSource {
                 if entry.entry_type.as_deref() == Some("user")
                     || entry.entry_type.as_deref() == Some("assistant")
                 {
-                    if started_at.is_none() {
-                        if let Some(ts) = &entry.timestamp {
-                            started_at = ts.parse::<DateTime<Utc>>().ok();
-                        }
+                    if started_at.is_none()
+                        && let Some(ts) = &entry.timestamp
+                    {
+                        started_at = ts.parse::<DateTime<Utc>>().ok();
                     }
                     if cwd.is_none() {
                         cwd = entry.cwd.clone();
@@ -279,10 +279,10 @@ impl SessionSource for ClaudeCodeSource {
                     if title.is_none() {
                         title = entry.slug.clone();
                     }
-                    if model.is_none() {
-                        if let Some(msg) = &entry.message {
-                            model = msg.model.clone();
-                        }
+                    if model.is_none()
+                        && let Some(msg) = &entry.message
+                    {
+                        model = msg.model.clone();
                     }
                 }
             }

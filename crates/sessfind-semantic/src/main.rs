@@ -69,12 +69,12 @@ fn find_sessfind() -> Result<std::path::PathBuf> {
         return Ok(path);
     }
     // Look next to our own binary (common in dev builds: target/debug/)
-    if let Ok(self_path) = std::env::current_exe() {
-        if let Some(dir) = self_path.parent() {
-            let sibling = dir.join("sessfind");
-            if sibling.exists() {
-                return Ok(sibling);
-            }
+    if let Ok(self_path) = std::env::current_exe()
+        && let Some(dir) = self_path.parent()
+    {
+        let sibling = dir.join("sessfind");
+        if sibling.exists() {
+            return Ok(sibling);
         }
     }
     anyhow::bail!(
@@ -137,12 +137,12 @@ fn cmd_index(force: bool) -> Result<()> {
             .map(|c| {
                 let mut enriched = String::new();
                 // Add project name for context
-                if let Some(name) = c.project.rsplit('/').next() {
-                    if !name.is_empty() {
-                        enriched.push_str("Project: ");
-                        enriched.push_str(name);
-                        enriched.push('\n');
-                    }
+                if let Some(name) = c.project.rsplit('/').next()
+                    && !name.is_empty()
+                {
+                    enriched.push_str("Project: ");
+                    enriched.push_str(name);
+                    enriched.push('\n');
                 }
                 // Add title for context
                 if let Some(ref title) = c.title {
