@@ -146,9 +146,13 @@ fn clean_message_text(text: &str) -> String {
 
             // Skip known internal tags and their content
             match tag_name {
-                "local-command-caveat" | "local-command-stdout"
-                | "command-name" | "command-message" | "command-args"
-                | "system-reminder" | "user-prompt-submit-hook"
+                "local-command-caveat"
+                | "local-command-stdout"
+                | "command-name"
+                | "command-message"
+                | "command-args"
+                | "system-reminder"
+                | "user-prompt-submit-hook"
                 | "antml:thinking" => {
                     // Find closing tag and skip everything
                     let close_tag = format!("</{tag_name}>");
