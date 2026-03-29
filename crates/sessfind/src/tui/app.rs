@@ -56,6 +56,7 @@ pub struct App<'a> {
     pub should_quit: bool,
     pub resume_session: Option<(String, Source, String)>, // (session_id, source, project)
     pub show_help: bool,
+    pub help_scroll: usize,
     engine: &'a IndexEngine,
     all_chunks: Vec<SearchResult>,
     cached_session_id: Option<String>,
@@ -92,6 +93,7 @@ impl<'a> App<'a> {
             should_quit: false,
             resume_session: None,
             show_help: false,
+            help_scroll: 0,
             engine,
             all_chunks,
             cached_session_id: None,

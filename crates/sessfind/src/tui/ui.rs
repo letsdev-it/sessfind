@@ -45,7 +45,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     draw_status_bar(f, app, chunks[3]);
 
     if app.show_help {
-        draw_help_popup(f, f.area());
+        draw_help_popup(f, f.area(), app.help_scroll);
     }
 }
 
@@ -490,7 +490,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(bar, area);
 }
 
-fn draw_help_popup(f: &mut Frame, area: Rect) {
+fn draw_help_popup(f: &mut Frame, area: Rect, scroll: usize) {
     let help_text = vec![
         Line::from(Span::styled(
             " Session Finder - Help",
@@ -652,8 +652,8 @@ fn draw_help_popup(f: &mut Frame, area: Rect) {
         )),
     ];
 
-    // Center popup: ~60 wide, height = lines + 2 (borders)
-    let popup_w = 60u16.min(area.width.saturating_sub(4));
+    // Center popup: ~76 wide, capped by terminal size
+    let popup_w = 76u16.min(area.width.saturating_sub(4));
     let popup_h = (help_text.len() as u16 + 2).min(area.height.saturating_sub(2));
     let x = (area.width.saturating_sub(popup_w)) / 2;
     let y = (area.height.saturating_sub(popup_h)) / 2;
@@ -668,7 +668,8 @@ fn draw_help_popup(f: &mut Frame, area: Rect) {
 
     let help = Paragraph::new(help_text)
         .block(block)
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+        .scroll((scroll as u16, 0));
 
     f.render_widget(help, popup_area);
 }
