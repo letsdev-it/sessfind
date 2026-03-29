@@ -19,6 +19,8 @@ Examples:
 
 Always update `README.md` after making user-facing changes (new flags, features, behavior changes, etc.).
 
+When adding or removing a page in `docs/`, update the `nav` section in `mkdocs.yml` to keep the documentation site in sync.
+
 ## Before push
 
 Before pushing a branch, run the same checks that CI runs for pull requests:
