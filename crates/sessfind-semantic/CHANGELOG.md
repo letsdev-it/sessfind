@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/letsdev-it/sessfind/compare/sessfind-semantic-v0.1.3...sessfind-semantic-v0.2.0) - 2026-03-29
+
+### Added
+
+- add Cursor as session source
+
+### Other
+
+- Merge branch 'main' into feat/cursor-support
+- bump workspace versions (minor)
+
 ## [0.1.3](https://github.com/letsdev-it/sessfind/compare/sessfind-semantic-v0.1.2...sessfind-semantic-v0.1.3) - 2026-03-29
 
 ### Fixed
