@@ -6,7 +6,16 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     // Help popup intercepts all keys
     if app.show_help {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('?') => app.show_help = false,
+            KeyCode::Esc | KeyCode::Char('?') => {
+                app.show_help = false;
+                app.help_scroll = 0;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.help_scroll = app.help_scroll.saturating_add(1)
+            }
+            KeyCode::Up | KeyCode::Char('k') => app.help_scroll = app.help_scroll.saturating_sub(1),
+            KeyCode::PageDown => app.help_scroll = app.help_scroll.saturating_add(10),
+            KeyCode::PageUp => app.help_scroll = app.help_scroll.saturating_sub(10),
             _ => {}
         }
         return;

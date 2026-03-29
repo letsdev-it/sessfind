@@ -53,6 +53,7 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
 
       - name: Build and upload sessfind
+        if: startsWith(github.event.release.tag_name, 'sessfind-v')
         uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: sessfind
@@ -64,6 +65,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and upload sessfind-semantic
+        if: startsWith(github.event.release.tag_name, 'sessfind-semantic-v')
         uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: sessfind-semantic
