@@ -1,10 +1,24 @@
 # https://release-plz.dev/docs/github/quickstart
+# Binaries: same workflow run as release (avoids needing a PAT to trigger `on: release`).
+# https://release-plz.dev/docs/extra/releasing-binaries
 name: Release-plz
 
 on:
   push:
     branches:
       - main
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  CARGO_NET_RETRY: 10
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTUP_MAX_RETRIES: 10
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   release-plz-release:
@@ -14,6 +28,8 @@ jobs:
     permissions:
       contents: write
       pull-requests: read
+    outputs:
+      releases_created: ${{ steps.release_plz.outputs.releases_created }}
     steps:
       - name: Require CARGO_REGISTRY_TOKEN
         run: |
@@ -34,12 +50,76 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run release-plz release
+        id: release_plz
         uses: release-plz/action@v0.5.128
         with:
           command: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # Attach prebuilt archives to the GitHub Release created by release-plz (single-crate tag: vX.Y.Z).
+  upload-release-assets:
+    name: Upload ${{ matrix.target }}
+    needs: release-plz-release
+    if: ${{ !github.event.repository.fork && needs.release-plz-release.outputs.releases_created == 'true' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-apple-darwin
+            os: macos-13
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve release tag
+        id: meta
+        run: |
+          set -euo pipefail
+          git fetch origin --tags
+          VERSION=$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)
+          TAG="v${VERSION}"
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::error::Expected tag ${TAG} (from Cargo.toml) after release-plz; not found."
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "ref=refs/tags/${TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cross-compilation tools
+        uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: ${{ matrix.target }}
+        if: ${{ startsWith(matrix.os, 'ubuntu') }}
+
+      - name: Build and upload binary
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: sessfind
+          target: ${{ matrix.target }}
+          ref: ${{ steps.meta.outputs.ref }}
+          tar: unix
+          locked: true
+          checksum: sha256
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   release-plz-pr:
     name: Release-plz PR

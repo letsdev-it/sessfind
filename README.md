@@ -45,6 +45,10 @@ cargo install sessfind
 
 Requires Rust **1.85+** (edition 2024).
 
+### From GitHub Releases
+
+Each [release](https://github.com/letsdev-it/sessfind/releases) includes prebuilt archives (Linux x86_64 / aarch64, macOS Intel / Apple Silicon) and SHA256 checksums. Download the `tar.gz` for your platform, unpack, and put `sessfind` on your `PATH`.
+
 ### From source
 
 ```bash
