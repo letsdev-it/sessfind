@@ -47,6 +47,7 @@ nav:
     - Search Modes: usage/search-modes.md
     - LLM Configuration: usage/llm-configuration.md
     - Automatic Indexing: usage/automatic-indexing.md
+    - Agent Skill: usage/agent-skill.md
   - Plugins:
     - Semantic Search: plugins/semantic-search.md
   - Architecture:
