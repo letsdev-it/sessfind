@@ -8,8 +8,8 @@ use super::app::{App, Focus};
 
 /// Brand accent color #818CF8
 const ACCENT: Color = Color::Rgb(129, 140, 248);
-/// Lighter tint for "find" — same hue, higher lightness
-const ACCENT2: Color = Color::Rgb(192, 198, 252);
+/// Mid-tint for "find" — visible on both dark and light terminals
+const ACCENT2: Color = Color::Rgb(150, 160, 248);
 /// Dot on `i` in the logo (`▀▀` on row 1, above the stem)
 const ACCENT_ORANGE: Color = Color::Rgb(251, 146, 60);
 
@@ -111,7 +111,7 @@ fn draw_banner(f: &mut Frame, area: Rect) {
         Span::styled(
             " Session Finder",
             Style::default()
-                .fg(Color::White)
+                .fg(Color::Reset)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
@@ -127,7 +127,7 @@ fn draw_banner(f: &mut Frame, area: Rect) {
 fn draw_main_area(f: &mut Frame, app: &App, area: Rect) {
     let panes = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
         .split(area);
 
     draw_results_list(f, app, panes[0]);
@@ -210,7 +210,7 @@ fn draw_results_list(f: &mut Frame, app: &App, area: Rect) {
             };
 
             let date = r.timestamp.format("%Y-%m-%d %H:%M");
-            let project = truncate_end(&short_project(&r.project), 16);
+            let project = truncate_end(&short_project(&r.project), 12);
 
             let style = if i == app.selected {
                 Style::default()
@@ -232,8 +232,8 @@ fn draw_results_list(f: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(source_color),
                 ),
                 Span::styled(
-                    format!("{:<15} ", project),
-                    Style::default().fg(Color::White),
+                    format!("{:<12} ", project),
+                    Style::default().fg(Color::Reset),
                 ),
                 Span::styled(format!("{}", date), Style::default().fg(date_color)),
             ]);
@@ -321,26 +321,26 @@ fn draw_detail_pane(f: &mut Frame, app: &App, area: Rect) {
 
     lines.push(Line::from(vec![
         Span::styled(" Session: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(&selected.session_id, Style::default().fg(Color::White)),
+        Span::styled(&selected.session_id, Style::default().fg(Color::Reset)),
     ]));
 
     lines.push(Line::from(vec![
         Span::styled(" Project: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(&selected.project, Style::default().fg(Color::White)),
+        Span::styled(&selected.project, Style::default().fg(Color::Reset)),
     ]));
 
     lines.push(Line::from(vec![
         Span::styled(" Date:    ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             selected.timestamp.format("%Y-%m-%d %H:%M").to_string(),
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         ),
     ]));
 
     if let Some(title) = &selected.title {
         lines.push(Line::from(vec![
             Span::styled(" Title:   ", Style::default().fg(Color::DarkGray)),
-            Span::styled(title, Style::default().fg(Color::White)),
+            Span::styled(title, Style::default().fg(Color::Reset)),
         ]));
     }
 
@@ -436,7 +436,7 @@ fn draw_input_bar(f: &mut Frame, app: &App, area: Rect) {
     // Search input
     let input_text = Line::from(vec![
         Span::styled("search> ", Style::default().fg(Color::DarkGray)),
-        Span::styled(&app.input, Style::default().fg(Color::White)),
+        Span::styled(&app.input, Style::default().fg(Color::Reset)),
     ]);
     let input_widget = Paragraph::new(input_text);
     f.render_widget(input_widget, input_layout[0]);
@@ -517,7 +517,7 @@ fn draw_help_popup(f: &mut Frame, area: Rect) {
         Line::from(Span::styled(
             " Search Modes (Shift+Tab to switch):",
             Style::default()
-                .fg(Color::White)
+                .fg(Color::Reset)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -533,11 +533,11 @@ fn draw_help_popup(f: &mut Frame, area: Rect) {
         ]),
         Line::from(Span::styled(
             "     Keyword-based search with relevance scoring.",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
             "     Best for finding specific terms or phrases.",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(""),
         Line::from(Span::styled(
@@ -546,23 +546,23 @@ fn draw_help_popup(f: &mut Frame, area: Rect) {
         )),
         Line::from(Span::styled(
             "       shopping                single keyword",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
             "       shopping assistant      any of these words (OR)",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
             "       +shopping +assistant    all words required (AND)",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
             "       \"shopping assistant\"    exact phrase",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
             "       shopp*                  prefix wildcard",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(""),
         Line::from(vec![
@@ -574,11 +574,11 @@ fn draw_help_popup(f: &mut Frame, area: Rect) {
         ]),
         Line::from(Span::styled(
             "     Searches in session content, project name, and title.",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
             "     Useful when FTS doesn't find what you need.",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(""),
         Line::from(vec![
@@ -590,11 +590,11 @@ fn draw_help_popup(f: &mut Frame, area: Rect) {
         ]),
         Line::from(Span::styled(
             "     Finds conceptually similar sessions, not just keywords.",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
             "     Press Enter to search (not instant, uses ML model).",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
             "     Requires: cargo install sessfind-semantic",
@@ -610,11 +610,11 @@ fn draw_help_popup(f: &mut Frame, area: Rect) {
         ]),
         Line::from(Span::styled(
             "     FTS narrows candidates, then LLM re-ranks by relevance.",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
             "     Press Enter to search (not instant, calls LLM).",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
             "     Detected tools: claude, opencode, copilot (if installed)",
@@ -628,37 +628,37 @@ fn draw_help_popup(f: &mut Frame, area: Rect) {
         Line::from(Span::styled(
             " Keybindings:",
             Style::default()
-                .fg(Color::White)
+                .fg(Color::Reset)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         Line::from(Span::styled(
             "   Tab           switch focus between search and results",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
             "   Shift+Tab     cycle search mode (FTS / Fuzzy / LLM...)",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
             "   Up/Down, j/k  navigate results list",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
             "   PgUp/PgDn     scroll detail pane",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
             "   Enter         resume selected session",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
             "   Ctrl+U        clear search input",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
             "   Esc           quit (or close this help)",
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
         )),
         Line::from(""),
         Line::from(Span::styled(
