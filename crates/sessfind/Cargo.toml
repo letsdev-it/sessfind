@@ -11,7 +11,7 @@ keywords = ["cli", "search", "tui", "ai", "sessions"]
 categories = ["command-line-utilities"]
 
 [dependencies]
-sessfind-common = { path = "../sessfind-common" }
+sessfind-common = "0.1.0"
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
