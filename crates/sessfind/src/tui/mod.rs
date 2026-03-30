@@ -41,6 +41,12 @@ pub fn run(engine: &IndexEngine) -> Result<Option<ResumeCommand>> {
             continue;
         }
 
+        if let Ok(Some(ver)) = app.update_rx.try_recv() {
+            if ver != env!("CARGO_PKG_VERSION") {
+                app.latest_version = Some(ver);
+            }
+        }
+
         if event::poll(Duration::from_millis(50))?
             && let Event::Key(key) = event::read()?
         {
