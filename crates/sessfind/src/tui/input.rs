@@ -1,8 +1,37 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::app::{App, Focus};
+use super::app::{App, Focus, ResumeOption};
 
 pub fn handle_key(app: &mut App, key: KeyEvent) {
+    // Resume confirmation dialog intercepts all keys
+    if app.confirm_resume.is_some() {
+        match key.code {
+            KeyCode::Esc => {
+                app.confirm_resume = None;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(state) = &mut app.confirm_resume {
+                    state.selected = state.selected.saturating_sub(1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(state) = &mut app.confirm_resume {
+                    state.selected = (state.selected + 1).min(ResumeOption::ALL.len() - 1);
+                }
+            }
+            KeyCode::Enter => {
+                let option = app
+                    .confirm_resume
+                    .as_ref()
+                    .map(|s| ResumeOption::ALL[s.selected])
+                    .unwrap_or(ResumeOption::Cancel);
+                app.confirm_resume_select(option);
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // Help popup intercepts all keys
     if app.show_help {
         match key.code {

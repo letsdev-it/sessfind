@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use chrono::{DateTime, Utc};
+
 use crate::indexer::engine::{IndexEngine, SearchParams};
 use crate::llm::{self, LlmBackend};
 use crate::models::{SearchResult, Source};
@@ -40,6 +42,32 @@ pub enum Focus {
     Results,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeOption {
+    SessionDir,
+    CurrentDir,
+    Cancel,
+}
+
+impl ResumeOption {
+    pub const ALL: [ResumeOption; 3] = [
+        ResumeOption::SessionDir,
+        ResumeOption::CurrentDir,
+        ResumeOption::Cancel,
+    ];
+}
+
+#[derive(Debug, Clone)]
+pub struct ResumeConfirmState {
+    pub session_id: String,
+    pub source: Source,
+    pub project: String,
+    pub title: Option<String>,
+    pub timestamp: DateTime<Utc>,
+    pub selected: usize,
+    pub session_dir_exists: bool,
+}
+
 pub struct App<'a> {
     pub input: String,
     pub cursor_pos: usize,
@@ -54,6 +82,7 @@ pub struct App<'a> {
     pub focus: Focus,
     pub should_quit: bool,
     pub resume_session: Option<(String, Source, String)>, // (session_id, source, project)
+    pub confirm_resume: Option<ResumeConfirmState>,
     pub show_help: bool,
     pub help_scroll: usize,
     engine: &'a IndexEngine,
@@ -91,6 +120,7 @@ impl<'a> App<'a> {
             focus: Focus::Search,
             should_quit: false,
             resume_session: None,
+            confirm_resume: None,
             show_help: false,
             help_scroll: 0,
             engine,
@@ -320,8 +350,42 @@ impl<'a> App<'a> {
 
     pub fn resume_selected(&mut self) {
         if let Some(r) = self.results.get(self.selected) {
-            self.resume_session = Some((r.session_id.clone(), r.source, r.project.clone()));
-            self.should_quit = true;
+            let session_dir_exists = std::path::Path::new(&r.project).is_dir();
+            self.confirm_resume = Some(ResumeConfirmState {
+                session_id: r.session_id.clone(),
+                source: r.source,
+                project: r.project.clone(),
+                title: r.title.clone(),
+                timestamp: r.timestamp,
+                selected: 0,
+                session_dir_exists,
+            });
+        }
+    }
+
+    pub fn confirm_resume_select(&mut self, option: ResumeOption) {
+        match option {
+            ResumeOption::SessionDir => {
+                if let Some(state) = self.confirm_resume.take() {
+                    if !state.session_dir_exists {
+                        let _ = std::fs::create_dir_all(&state.project);
+                    }
+                    self.resume_session = Some((state.session_id, state.source, state.project));
+                    self.should_quit = true;
+                }
+            }
+            ResumeOption::CurrentDir => {
+                if let Some(state) = self.confirm_resume.take() {
+                    let cwd = std::env::current_dir()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|_| ".".into());
+                    self.resume_session = Some((state.session_id, state.source, cwd));
+                    self.should_quit = true;
+                }
+            }
+            ResumeOption::Cancel => {
+                self.confirm_resume = None;
+            }
         }
     }
 
@@ -336,11 +400,7 @@ impl<'a> App<'a> {
         };
         Some(ResumeCommand {
             args,
-            cwd: if *source == Source::ClaudeCode {
-                Some(project.clone())
-            } else {
-                None
-            },
+            cwd: Some(project.clone()),
         })
     }
 }

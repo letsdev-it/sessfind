@@ -4,7 +4,9 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 
-use super::app::{App, Focus};
+use chrono::Local;
+
+use super::app::{App, Focus, ResumeOption};
 
 /// Brand accent color #818CF8
 const ACCENT: Color = Color::Rgb(129, 140, 248);
@@ -46,6 +48,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if app.show_help {
         draw_help_popup(f, f.area(), app.help_scroll);
+    }
+
+    if app.confirm_resume.is_some() {
+        draw_resume_confirm_popup(f, f.area(), app);
     }
 }
 
@@ -211,7 +217,7 @@ fn draw_results_list(f: &mut Frame, app: &App, area: Rect) {
                 crate::models::Source::Codex => Color::LightRed,
             };
 
-            let date = r.timestamp.format("%Y-%m-%d %H:%M");
+            let date = r.timestamp.with_timezone(&Local).format("%Y-%m-%d %H:%M");
             let project = truncate_end(&short_project(&r.project), 12);
 
             let style = if i == app.selected {
@@ -336,7 +342,11 @@ fn draw_detail_pane(f: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::from(vec![
         Span::styled(" Date:    ", Style::default().fg(Color::DarkGray)),
         Span::styled(
-            selected.timestamp.format("%Y-%m-%d %H:%M").to_string(),
+            selected
+                .timestamp
+                .with_timezone(&Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string(),
             Style::default().fg(Color::Reset),
         ),
     ]));
@@ -676,6 +686,129 @@ fn draw_help_popup(f: &mut Frame, area: Rect, scroll: usize) {
         .scroll((scroll as u16, 0));
 
     f.render_widget(help, popup_area);
+}
+
+fn draw_resume_confirm_popup(f: &mut Frame, area: Rect, app: &App) {
+    let state = match &app.confirm_resume {
+        Some(s) => s,
+        None => return,
+    };
+
+    let source_color = match state.source {
+        crate::models::Source::ClaudeCode => Color::Magenta,
+        crate::models::Source::OpenCode => Color::Cyan,
+        crate::models::Source::Copilot => Color::Yellow,
+        crate::models::Source::Cursor => Color::Green,
+        crate::models::Source::Codex => Color::LightRed,
+    };
+
+    let local_date = state
+        .timestamp
+        .with_timezone(&Local)
+        .format("%Y-%m-%d %H:%M")
+        .to_string();
+
+    let title_text = state.title.as_deref().unwrap_or("(untitled)").to_string();
+
+    let session_dir_label = if state.session_dir_exists {
+        state.project.clone()
+    } else {
+        format!("{} (will be created)", state.project)
+    };
+
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| ".".into());
+
+    let options: Vec<(String, bool)> = vec![
+        (session_dir_label, state.selected == 0),
+        (cwd, state.selected == 1),
+        ("Cancel".into(), state.selected == 2),
+    ];
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Session summary
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!(" {} ", state.source.as_str()),
+            Style::default()
+                .fg(source_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("· ", Style::default().fg(Color::DarkGray)),
+        Span::styled(&local_date, Style::default().fg(Color::Reset)),
+    ]));
+    lines.push(Line::from(Span::styled(
+        format!(" {}", title_text),
+        Style::default().fg(Color::Reset),
+    )));
+
+    lines.push(Line::from(""));
+
+    // Question
+    lines.push(Line::from(Span::styled(
+        " Where do you want to resume the session?",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+
+    // Options
+    for (i, (label, selected)) in options.iter().enumerate() {
+        let option = ResumeOption::ALL[i];
+        let (prefix, style) = if *selected {
+            (
+                " ▸ ",
+                Style::default()
+                    .fg(if option == ResumeOption::Cancel {
+                        Color::Red
+                    } else {
+                        ACCENT
+                    })
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            (
+                "   ",
+                Style::default().fg(if option == ResumeOption::Cancel {
+                    Color::DarkGray
+                } else {
+                    Color::Reset
+                }),
+            )
+        };
+        lines.push(Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(label, style),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " ↑↓ select  Enter confirm  Esc cancel",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let popup_w = 72u16.min(area.width.saturating_sub(4));
+    let popup_h = (lines.len() as u16 + 2).min(area.height.saturating_sub(2));
+    let x = (area.width.saturating_sub(popup_w)) / 2;
+    let y = (area.height.saturating_sub(popup_h)) / 2;
+    let popup_area = Rect::new(x, y, popup_w, popup_h);
+
+    f.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Resume Session ")
+        .border_style(Style::default().fg(ACCENT));
+
+    let popup = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
+
+    f.render_widget(popup, popup_area);
 }
 
 fn short_project(project: &str) -> String {
