@@ -41,7 +41,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         ])
         .split(f.area());
 
-    draw_banner(f, chunks[0]);
+    draw_banner(f, app, chunks[0]);
     draw_main_area(f, app, chunks[1]);
     draw_input_bar(f, app, chunks[2]);
     draw_status_bar(f, app, chunks[3]);
@@ -55,7 +55,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
 }
 
-fn draw_banner(f: &mut Frame, area: Rect) {
+fn draw_banner(f: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
     for (row, banner_line) in BANNER_LINES.iter().enumerate() {
@@ -121,6 +121,10 @@ fn draw_banner(f: &mut Frame, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
+            format!(" v{}", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled(
             "  https://letsdev.it | github.com/letsdev-it/sessfind",
             Style::default().fg(Color::DarkGray),
         ),
@@ -128,6 +132,22 @@ fn draw_banner(f: &mut Frame, area: Rect) {
 
     let paragraph = Paragraph::new(lines);
     f.render_widget(paragraph, area);
+
+    // Show update available in top-right corner
+    if let Some(ref ver) = app.latest_version {
+        let text = format!(" v{ver} available ");
+        let width = text.len() as u16;
+        if area.width > width {
+            let update_area = Rect::new(area.right() - width, area.y, width, 1);
+            let update_widget = Paragraph::new(Span::styled(
+                text,
+                Style::default()
+                    .fg(ACCENT_ORANGE)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            f.render_widget(update_widget, update_area);
+        }
+    }
 }
 
 fn draw_main_area(f: &mut Frame, app: &App, area: Rect) {

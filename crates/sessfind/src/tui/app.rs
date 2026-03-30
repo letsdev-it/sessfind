@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::mpsc;
 
 use chrono::{DateTime, Utc};
 
@@ -85,6 +86,8 @@ pub struct App<'a> {
     pub confirm_resume: Option<ResumeConfirmState>,
     pub show_help: bool,
     pub help_scroll: usize,
+    pub update_rx: mpsc::Receiver<Option<String>>,
+    pub latest_version: Option<String>,
     engine: &'a IndexEngine,
     all_chunks: Vec<SearchResult>,
     cached_session_id: Option<String>,
@@ -106,6 +109,8 @@ impl<'a> App<'a> {
         // Show all sessions initially (deduplicated)
         let results = dedup_by_session(&all_chunks);
 
+        let update_rx = crate::version_check::check_latest_version_async();
+
         let mut app = Self {
             input: String::new(),
             cursor_pos: 0,
@@ -123,6 +128,8 @@ impl<'a> App<'a> {
             confirm_resume: None,
             show_help: false,
             help_scroll: 0,
+            update_rx,
+            latest_version: None,
             engine,
             all_chunks,
             cached_session_id: None,
