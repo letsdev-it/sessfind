@@ -7,6 +7,7 @@ pub mod semantic;
 mod service;
 mod sources;
 mod tui;
+mod version_check;
 mod watcher;
 
 use anyhow::Result;
