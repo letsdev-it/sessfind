@@ -25,7 +25,7 @@
 - Fuzzy substring matching as alternative search mode
 - **Semantic search** — find conceptually similar sessions using ML embeddings (optional plugin)
 - **LLM search** — agentic search using installed AI CLI tools (Claude Code, OpenCode, Copilot)
-- Resume any session directly from the search results
+- Resume any session directly from the search results with directory choice
 - Incremental indexing — only processes new/changed sessions
 - Zero external runtime dependencies — single static binary
 
