@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/letsdev-it/sessfind/compare/sessfind-common-v0.4.0...sessfind-common-v0.5.0) - 2026-03-30
+
+### Other
+
+- Merge pull request #38 from letsdev-it/feat/codex-support
+- update TUI docs for resume confirmation dialog
+
 ## [0.4.0](https://github.com/letsdev-it/sessfind/compare/sessfind-common-v0.3.0...sessfind-common-v0.4.0) - 2026-03-29
 
 ### Added

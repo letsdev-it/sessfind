@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.6.0...sessfind-v0.7.0) - 2026-03-30
+
+### Added
+
+- *(tui)* add resume confirmation dialog with directory choice
+
+### Other
+
+- Merge pull request #38 from letsdev-it/feat/codex-support
+- add TUI screenshots and demo GIF (WebP + fallbacks)
+- update TUI docs for resume confirmation dialog
+
 ## [0.6.0](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.5.0...sessfind-v0.6.0) - 2026-03-29
 
 ### Added
