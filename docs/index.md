@@ -10,7 +10,7 @@
 
 [letsdev.it](https://letsdev.it)
 
-![sessfind interactive TUI — split-pane search and session preview](https://raw.githubusercontent.com/letsdev-it/sessfind/main/tui.png)
+![sessfind demo — search and resume an AI coding session](assets/tui-demo.webp)
 
 ---
 

@@ -6,6 +6,8 @@ sessfind supports four search modes. Use `Shift+Tab` in the TUI to cycle between
 
 The default mode. Powered by [tantivy](https://github.com/quickwit-oss/tantivy) with BM25 ranking.
 
+![sessfind Full-Text Search mode](../assets/tui-fts.webp)
+
 ```
 shopping                single keyword
 shopping assistant      any of these words (OR)
@@ -20,6 +22,8 @@ shopp*                  prefix wildcard
 ## Fuzzy Search
 
 Case-insensitive substring match across content, project name, and title. Good for short, approximate queries.
+
+![sessfind Fuzzy search mode](../assets/tui-fuzzy.webp)
 
 ```bash
 sessfind search "auth" --method fuzzy

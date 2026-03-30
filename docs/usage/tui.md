@@ -15,7 +15,7 @@ The TUI opens in full-screen mode with three areas:
 - **Right pane** — session details and conversation preview
 - **Bottom** — search input with mode indicator
 
-![sessfind interactive TUI — split-pane search and session preview](https://raw.githubusercontent.com/letsdev-it/sessfind/main/tui.png)
+![sessfind interactive TUI — split-pane search and session preview](../assets/tui-fts.webp)
 
 ## Keybindings
 
@@ -45,5 +45,7 @@ When you press `Enter` on a selected session, a confirmation dialog appears show
     - **Cancel** — go back to search
 
 Use `↑/↓` to select an option and `Enter` to confirm, or `Esc` to cancel.
+
+![sessfind resume confirmation dialog](../assets/tui-resume.webp)
 
 All dates in the TUI are displayed in your computer's local timezone.
