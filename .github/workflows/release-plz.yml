@@ -1,5 +1,5 @@
 # https://release-plz.dev/docs/github/quickstart
-name: Release-plz
+name: Release Rust (cargo)
 
 on:
   push:

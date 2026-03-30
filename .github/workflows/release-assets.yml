@@ -1,4 +1,4 @@
-name: Release assets
+name: Release Binaries (github)
 
 on:
   release:
