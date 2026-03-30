@@ -10,7 +10,7 @@
 
 [letsdev.it](https://letsdev.it)
 
-![sessfind interactive TUI — split-pane search and session preview](tui.png)
+![sessfind demo — search and resume an AI coding session](docs/assets/tui-demo.webp)
 
 📖 **[Full Documentation](https://letsdev-it.github.io/sessfind/)**
 
@@ -25,7 +25,7 @@
 - Fuzzy substring matching as alternative search mode
 - **Semantic search** — find conceptually similar sessions using ML embeddings (optional plugin)
 - **LLM search** — agentic search using installed AI CLI tools (Claude Code, OpenCode, Copilot)
-- Resume any session directly from the search results
+- Resume any session directly from the search results with directory choice
 - Incremental indexing — only processes new/changed sessions
 - **Automatic indexing** — background watcher re-indexes on session changes ([details](docs/usage/automatic-indexing.md))
 - **Agent skill** — use sessfind directly from GitHub Copilot CLI, Claude Code, or OpenCode ([details](docs/usage/agent-skill.md))
