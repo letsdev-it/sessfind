@@ -44,6 +44,12 @@ pub enum Focus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResultsPane {
+    List,
+    Preview,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResumeOption {
     SessionDir,
     CurrentDir,
@@ -81,6 +87,7 @@ pub struct App<'a> {
     pub semantic_searching: bool,
     pub llm_searching: bool,
     pub focus: Focus,
+    pub results_pane: ResultsPane,
     pub should_quit: bool,
     pub resume_session: Option<(String, Source, String)>, // (session_id, source, project)
     pub confirm_resume: Option<ResumeConfirmState>,
@@ -123,6 +130,7 @@ impl<'a> App<'a> {
             semantic_searching: false,
             llm_searching: false,
             focus: Focus::Search,
+            results_pane: ResultsPane::List,
             should_quit: false,
             resume_session: None,
             confirm_resume: None,
@@ -336,11 +344,15 @@ impl<'a> App<'a> {
     }
 
     pub fn scroll_detail_down(&mut self) {
-        self.detail_scroll += 5;
+        self.detail_scroll = self.detail_scroll.saturating_add(5);
     }
 
     pub fn scroll_detail_up(&mut self) {
         self.detail_scroll = self.detail_scroll.saturating_sub(5);
+    }
+
+    pub fn scroll_detail_top(&mut self) {
+        self.detail_scroll = 0;
     }
 
     pub fn toggle_mode(&mut self) {
@@ -350,7 +362,10 @@ impl<'a> App<'a> {
 
     pub fn toggle_focus(&mut self) {
         self.focus = match self.focus {
-            Focus::Search => Focus::Results,
+            Focus::Search => {
+                self.results_pane = ResultsPane::List;
+                Focus::Results
+            }
             Focus::Results => Focus::Search,
         };
     }

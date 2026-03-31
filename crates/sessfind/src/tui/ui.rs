@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 
 use chrono::Local;
 
-use super::app::{App, Focus, ResumeOption};
+use super::app::{App, Focus, ResultsPane, ResumeOption};
 
 /// Brand accent color #818CF8
 const ACCENT: Color = Color::Rgb(129, 140, 248);
@@ -30,7 +30,7 @@ const BANNER_FIND_START_COL: usize = 24;
 const BANNER_I_DOT_ROW: usize = 1;
 const BANNER_I_DOT_COLS: std::ops::RangeInclusive<usize> = 29..=30;
 
-pub fn draw(f: &mut Frame, app: &App) {
+pub fn draw(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -150,7 +150,7 @@ fn draw_banner(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn draw_main_area(f: &mut Frame, app: &App, area: Rect) {
+fn draw_main_area(f: &mut Frame, app: &mut App, area: Rect) {
     let panes = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
@@ -161,7 +161,7 @@ fn draw_main_area(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_results_list(f: &mut Frame, app: &App, area: Rect) {
-    let border_style = if app.focus == Focus::Results {
+    let border_style = if app.focus == Focus::Results && app.results_pane == ResultsPane::List {
         Style::default().fg(ACCENT)
     } else {
         Style::default().fg(Color::DarkGray)
@@ -301,8 +301,12 @@ fn draw_results_list(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(info_line, info_area);
 }
 
-fn draw_detail_pane(f: &mut Frame, app: &App, area: Rect) {
-    let border_style = Style::default().fg(Color::DarkGray);
+fn draw_detail_pane(f: &mut Frame, app: &mut App, area: Rect) {
+    let border_style = if app.focus == Focus::Results && app.results_pane == ResultsPane::Preview {
+        Style::default().fg(ACCENT)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
 
     if app.results.is_empty() {
         let block = Block::default()
@@ -420,6 +424,11 @@ fn draw_detail_pane(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(""));
     }
 
+    // Clamp scroll to prevent u16 overflow in ratatui's Paragraph rendering
+    // (internally computes `area.height + scroll.y` as u16).
+    let max_safe_scroll = (u16::MAX - content_area.height) as usize;
+    app.detail_scroll = app.detail_scroll.min(max_safe_scroll);
+
     let paragraph = Paragraph::new(lines)
         .block(block)
         .wrap(Wrap { trim: false })
@@ -496,30 +505,84 @@ fn draw_input_bar(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
-    let focus_hint = match app.focus {
-        Focus::Search => "Tab\u{2192}results",
-        Focus::Results => "Tab\u{2192}search",
-    };
-
     let count = app.results.len();
-    let status = Line::from(vec![
-        Span::styled(format!(" {focus_hint}"), Style::default().fg(ACCENT)),
-        Span::styled("  \u{2191}\u{2193} ", Style::default().fg(Color::DarkGray)),
-        Span::styled("navigate", Style::default().fg(Color::White)),
-        Span::styled("  Enter ", Style::default().fg(Color::DarkGray)),
-        Span::styled("resume", Style::default().fg(Color::White)),
-        Span::styled("  Esc ", Style::default().fg(Color::DarkGray)),
-        Span::styled("quit", Style::default().fg(Color::White)),
-        Span::styled("  Shift+Tab ", Style::default().fg(Color::DarkGray)),
-        Span::styled("mode", Style::default().fg(Color::White)),
-        Span::styled("  ? ", Style::default().fg(Color::DarkGray)),
-        Span::styled("help", Style::default().fg(Color::White)),
-        Span::styled(
-            format!("  {count} sessions"),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ]);
 
+    let mut spans: Vec<Span> = Vec::new();
+
+    match app.focus {
+        Focus::Search => {
+            spans.push(Span::styled(" Tab→results", Style::default().fg(ACCENT)));
+            spans.push(Span::styled(
+                "  Ctrl+U ",
+                Style::default().fg(Color::DarkGray),
+            ));
+            spans.push(Span::styled("clear", Style::default().fg(Color::White)));
+            spans.push(Span::styled(
+                "  Enter ",
+                Style::default().fg(Color::DarkGray),
+            ));
+            spans.push(Span::styled("search/go", Style::default().fg(Color::White)));
+            spans.push(Span::styled(
+                "  Shift+Tab ",
+                Style::default().fg(Color::DarkGray),
+            ));
+            spans.push(Span::styled("mode", Style::default().fg(Color::White)));
+            spans.push(Span::styled("  F1 ", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled("help", Style::default().fg(Color::White)));
+            spans.push(Span::styled("  Esc ", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled("quit", Style::default().fg(Color::White)));
+        }
+        Focus::Results => {
+            spans.push(Span::styled(" Tab→search", Style::default().fg(ACCENT)));
+            spans.push(Span::styled(
+                "  \u{2190}\u{2192} ",
+                Style::default().fg(Color::DarkGray),
+            ));
+            spans.push(Span::styled(
+                "switch pane",
+                Style::default().fg(Color::White),
+            ));
+
+            match app.results_pane {
+                ResultsPane::List => {
+                    spans.push(Span::styled(
+                        "  \u{2191}\u{2193} ",
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                    spans.push(Span::styled("navigate", Style::default().fg(Color::White)));
+                }
+                ResultsPane::Preview => {
+                    spans.push(Span::styled(
+                        "  \u{2191}\u{2193} ",
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                    spans.push(Span::styled("scroll", Style::default().fg(Color::White)));
+                    spans.push(Span::styled(
+                        "  PgUp ",
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                    spans.push(Span::styled("top", Style::default().fg(Color::White)));
+                }
+            }
+
+            spans.push(Span::styled(
+                "  Enter ",
+                Style::default().fg(Color::DarkGray),
+            ));
+            spans.push(Span::styled("resume", Style::default().fg(Color::White)));
+            spans.push(Span::styled("  F1 ", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled("help", Style::default().fg(Color::White)));
+            spans.push(Span::styled("  Esc ", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled("quit", Style::default().fg(Color::White)));
+        }
+    }
+
+    spans.push(Span::styled(
+        format!("  {count} sessions"),
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    let status = Line::from(spans);
     let bar = Paragraph::new(status).style(Style::default().bg(Color::Black));
     f.render_widget(bar, area);
 }
@@ -660,11 +723,15 @@ fn draw_help_popup(f: &mut Frame, area: Rect, scroll: usize) {
             Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
-            "   Up/Down, j/k  navigate results list",
+            "   Left/Right    switch between list and preview pane (in results)",
             Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
-            "   PgUp/PgDn     scroll detail pane",
+            "   Up/Down, j/k  navigate list or scroll preview (context-sensitive)",
+            Style::default().fg(Color::Reset),
+        )),
+        Line::from(Span::styled(
+            "   PgUp          jump to top of preview",
             Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
@@ -676,12 +743,16 @@ fn draw_help_popup(f: &mut Frame, area: Rect, scroll: usize) {
             Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
+            "   F1            toggle this help",
+            Style::default().fg(Color::Reset),
+        )),
+        Line::from(Span::styled(
             "   Esc           quit (or close this help)",
             Style::default().fg(Color::Reset),
         )),
         Line::from(""),
         Line::from(Span::styled(
-            " Press Esc or ? to close",
+            " Press Esc or F1 to close",
             Style::default().fg(Color::DarkGray),
         )),
     ];

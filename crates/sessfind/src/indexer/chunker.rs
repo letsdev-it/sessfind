@@ -99,19 +99,20 @@ fn pair_messages(messages: &[Message]) -> Vec<(Option<&Message>, Option<&Message
         if messages[i].role == Role::User {
             let user = Some(&messages[i]);
             i += 1;
-            // Collect assistant response(s) - take the first one
+            // Pair user with the first following assistant message
             let assistant = if i < messages.len() && messages[i].role == Role::Assistant {
                 let a = Some(&messages[i]);
                 i += 1;
-                // Skip additional assistant messages (continuations)
-                while i < messages.len() && messages[i].role == Role::Assistant {
-                    i += 1;
-                }
                 a
             } else {
                 None
             };
             pairs.push((user, assistant));
+            // Keep any additional consecutive assistant messages as separate pairs
+            while i < messages.len() && messages[i].role == Role::Assistant {
+                pairs.push((None, Some(&messages[i])));
+                i += 1;
+            }
         } else {
             // Orphan assistant message
             pairs.push((None, Some(&messages[i])));
@@ -212,15 +213,18 @@ mod tests {
     }
 
     #[test]
-    fn pair_messages_consecutive_assistants_collapsed() {
+    fn pair_messages_consecutive_assistants_kept() {
         let msgs = vec![
             msg(Role::User, "q"),
             msg(Role::Assistant, "a1"),
-            msg(Role::Assistant, "a2"), // continuation, skipped
+            msg(Role::Assistant, "a2"),
         ];
         let pairs = pair_messages(&msgs);
-        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(pairs[0].0.unwrap().text, "q");
         assert_eq!(pairs[0].1.unwrap().text, "a1");
+        assert!(pairs[1].0.is_none());
+        assert_eq!(pairs[1].1.unwrap().text, "a2");
     }
 
     #[test]

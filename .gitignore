@@ -21,3 +21,6 @@ target
 
 # MkDocs build output
 site/
+
+# Planned features / local design docs
+.planned_features/

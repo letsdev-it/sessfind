@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::app::{App, Focus, ResumeOption};
+use super::app::{App, Focus, ResultsPane, ResumeOption};
 
 pub fn handle_key(app: &mut App, key: KeyEvent) {
     // Resume confirmation dialog intercepts all keys
@@ -35,7 +35,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     // Help popup intercepts all keys
     if app.show_help {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('?') => {
+            KeyCode::Esc | KeyCode::F(1) => {
                 app.show_help = false;
                 app.help_scroll = 0;
             }
@@ -54,14 +54,17 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Esc => {
             app.should_quit = true;
         }
-        KeyCode::BackTab => {
+        KeyCode::BackTab if app.focus == Focus::Search => {
             app.toggle_mode();
         }
         KeyCode::Tab => {
             app.toggle_focus();
         }
-        KeyCode::Char('?') if app.focus == Focus::Results => {
-            app.show_help = true;
+        KeyCode::F(1) => {
+            app.show_help = !app.show_help;
+            if !app.show_help {
+                app.help_scroll = 0;
+            }
         }
         _ => match app.focus {
             Focus::Search => handle_search_key(app, key),
@@ -122,14 +125,9 @@ fn handle_search_key(app: &mut App, key: KeyEvent) {
                     app.request_semantic_search();
                 }
             } else if !app.results.is_empty() {
+                app.results_pane = ResultsPane::List;
                 app.focus = Focus::Results;
             }
-        }
-        KeyCode::Up => {
-            app.select_prev();
-        }
-        KeyCode::Down => {
-            app.select_next();
         }
         _ => {}
     }
@@ -137,13 +135,22 @@ fn handle_search_key(app: &mut App, key: KeyEvent) {
 
 fn handle_results_key(app: &mut App, key: KeyEvent) {
     match key.code {
-        KeyCode::Up => app.select_prev(),
-        KeyCode::Down => app.select_next(),
+        KeyCode::Left => {
+            app.results_pane = ResultsPane::List;
+        }
+        KeyCode::Right => {
+            app.results_pane = ResultsPane::Preview;
+        }
+        KeyCode::Up | KeyCode::Char('k') => match app.results_pane {
+            ResultsPane::List => app.select_prev(),
+            ResultsPane::Preview => app.scroll_detail_up(),
+        },
+        KeyCode::Down | KeyCode::Char('j') => match app.results_pane {
+            ResultsPane::List => app.select_next(),
+            ResultsPane::Preview => app.scroll_detail_down(),
+        },
         KeyCode::Enter => app.resume_selected(),
-        KeyCode::PageDown => app.scroll_detail_down(),
-        KeyCode::PageUp => app.scroll_detail_up(),
-        KeyCode::Char('j') => app.select_next(),
-        KeyCode::Char('k') => app.select_prev(),
+        KeyCode::PageUp => app.scroll_detail_top(),
         _ => {}
     }
 }

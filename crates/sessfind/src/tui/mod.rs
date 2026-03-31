@@ -29,7 +29,7 @@ pub fn run(engine: &IndexEngine) -> Result<Option<ResumeCommand>> {
 
     // Main loop
     loop {
-        terminal.draw(|f| ui::draw(f, &app))?;
+        terminal.draw(|f| ui::draw(f, &mut app))?;
 
         // If deferred search was requested, run it now (after UI redraw showed "Searching...")
         if app.semantic_searching {
