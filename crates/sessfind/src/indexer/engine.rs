@@ -2,7 +2,8 @@ use anyhow::Result;
 use std::path::Path;
 use tantivy::collector::TopDocs;
 use tantivy::query::{
-    AllQuery, BooleanQuery, EmptyQuery, Occur, PhrasePrefixQuery, Query, QueryParser,
+    AllQuery, BooleanQuery, EmptyQuery, FuzzyTermQuery, Occur, PhrasePrefixQuery, Query,
+    QueryParser,
 };
 use tantivy::schema::*;
 use tantivy::tokenizer::{LowerCaser, RemoveLongFilter, SimpleTokenizer, Stemmer, TextAnalyzer};
@@ -199,6 +200,53 @@ impl IndexEngine {
 
         let top_docs = searcher.search(&query, &TopDocs::with_limit(params.limit * 3))?;
 
+        self.collect_results(&searcher, &top_docs, params)
+    }
+
+    /// Fuzzy search using Levenshtein distance on individual terms.
+    /// Each word in the query becomes a FuzzyTermQuery (distance 1-2 depending on length).
+    /// Words are combined with OR (any match), results ranked by score.
+    pub fn search_fuzzy(&self, params: &SearchParams) -> Result<Vec<SearchResult>> {
+        let reader = self.index.reader()?;
+        let searcher = reader.searcher();
+
+        let text_field = self.schema.get_field("text").unwrap();
+
+        // Tokenize query: lowercase and split on whitespace
+        let terms: Vec<String> = params
+            .query
+            .to_lowercase()
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect();
+
+        if terms.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Build a BooleanQuery: each term is a FuzzyTermQuery (SHOULD = OR)
+        let sub_queries: Vec<(Occur, Box<dyn Query>)> = terms
+            .iter()
+            .map(|word| {
+                let distance = if word.len() <= 3 { 1 } else { 2 };
+                let term = tantivy::Term::from_field_text(text_field, word);
+                let fq = FuzzyTermQuery::new(term, distance, true);
+                (Occur::Should, Box::new(fq) as Box<dyn Query>)
+            })
+            .collect();
+
+        let query = BooleanQuery::new(sub_queries);
+        let top_docs = searcher.search(&query, &TopDocs::with_limit(params.limit * 3))?;
+
+        self.collect_results(&searcher, &top_docs, params)
+    }
+
+    fn collect_results(
+        &self,
+        searcher: &tantivy::Searcher,
+        top_docs: &[(f32, tantivy::DocAddress)],
+        params: &SearchParams,
+    ) -> Result<Vec<SearchResult>> {
         let chunk_id_f = self.schema.get_field("chunk_id").unwrap();
         let session_id_f = self.schema.get_field("session_id").unwrap();
         let source_f = self.schema.get_field("source").unwrap();
@@ -209,7 +257,7 @@ impl IndexEngine {
 
         let mut results = Vec::new();
 
-        for (score, doc_address) in top_docs {
+        for &(score, doc_address) in top_docs {
             let doc: tantivy::TantivyDocument = searcher.doc(doc_address)?;
 
             let source_val = doc

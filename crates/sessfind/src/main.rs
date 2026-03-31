@@ -34,6 +34,9 @@ struct Cli {
     /// Index all sources before launching TUI
     #[arg(long)]
     index: bool,
+    /// Initial search mode for TUI (fts, fuzzy, semantic, llm)
+    #[arg(long, short = 'm')]
+    mode: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -159,7 +162,7 @@ fn main() -> Result<()> {
                 }
             }
             // Launch TUI
-            if let Some(resume) = tui::run(&engine)? {
+            if let Some(resume) = tui::run(&engine, cli.mode.as_deref())? {
                 exec_resume(&resume)?;
             }
             return Ok(());
@@ -278,6 +281,8 @@ fn main() -> Result<()> {
                         .then_with(|| b.timestamp.cmp(&a.timestamp))
                 });
                 merged
+            } else if method == "fuzzy" {
+                engine.search_fuzzy(&params)?
             } else {
                 engine.search(&params)?
             };
