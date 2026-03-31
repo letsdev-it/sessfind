@@ -281,6 +281,8 @@ fn main() -> Result<()> {
                         .then_with(|| b.timestamp.cmp(&a.timestamp))
                 });
                 merged
+            } else if method == "fuzzy" {
+                engine.search_fuzzy(&params)?
             } else {
                 engine.search(&params)?
             };

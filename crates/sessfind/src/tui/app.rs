@@ -298,21 +298,19 @@ impl<'a> App<'a> {
     }
 
     fn search_fuzzy(&mut self) {
-        let query = self.input.to_lowercase();
-        let filtered: Vec<SearchResult> = self
-            .all_chunks
-            .iter()
-            .filter(|c| {
-                c.snippet.to_lowercase().contains(&query)
-                    || c.project.to_lowercase().contains(&query)
-                    || c.title
-                        .as_deref()
-                        .is_some_and(|t| t.to_lowercase().contains(&query))
-            })
-            .cloned()
-            .collect();
+        let params = SearchParams {
+            query: self.input.clone(),
+            limit: 50,
+            source: None,
+            project: None,
+            after: None,
+            before: None,
+        };
 
-        self.results = dedup_by_session(&filtered);
+        match self.engine.search_fuzzy(&params) {
+            Ok(results) => self.results = dedup_by_session(&results),
+            Err(_) => self.results.clear(),
+        }
     }
 
     pub fn load_detail(&mut self) {
