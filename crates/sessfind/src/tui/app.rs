@@ -351,6 +351,14 @@ impl<'a> App<'a> {
         self.detail_scroll = self.detail_scroll.saturating_sub(5);
     }
 
+    pub fn scroll_detail_top(&mut self) {
+        self.detail_scroll = 0;
+    }
+
+    pub fn scroll_detail_bottom(&mut self) {
+        self.detail_scroll = usize::MAX / 2;
+    }
+
     pub fn toggle_mode(&mut self) {
         self.mode_index = (self.mode_index + 1) % self.available_modes.len();
         self.on_input_changed();

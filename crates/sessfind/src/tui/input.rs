@@ -54,7 +54,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Esc => {
             app.should_quit = true;
         }
-        KeyCode::BackTab => {
+        KeyCode::BackTab if app.focus == Focus::Search => {
             app.toggle_mode();
         }
         KeyCode::Tab => {
@@ -150,8 +150,8 @@ fn handle_results_key(app: &mut App, key: KeyEvent) {
             ResultsPane::Preview => app.scroll_detail_down(),
         },
         KeyCode::Enter => app.resume_selected(),
-        KeyCode::PageDown => app.scroll_detail_down(),
-        KeyCode::PageUp => app.scroll_detail_up(),
+        KeyCode::PageUp => app.scroll_detail_top(),
+        KeyCode::PageDown => app.scroll_detail_bottom(),
         _ => {}
     }
 }

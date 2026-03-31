@@ -557,7 +557,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                         Style::default().fg(Color::DarkGray),
                     ));
                     spans.push(Span::styled(
-                        "scroll fast",
+                        "top/bottom",
                         Style::default().fg(Color::White),
                     ));
                 }
@@ -568,11 +568,6 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::DarkGray),
             ));
             spans.push(Span::styled("resume", Style::default().fg(Color::White)));
-            spans.push(Span::styled(
-                "  Shift+Tab ",
-                Style::default().fg(Color::DarkGray),
-            ));
-            spans.push(Span::styled("mode", Style::default().fg(Color::White)));
             spans.push(Span::styled("  F1 ", Style::default().fg(Color::DarkGray)));
             spans.push(Span::styled("help", Style::default().fg(Color::White)));
             spans.push(Span::styled("  Esc ", Style::default().fg(Color::DarkGray)));
