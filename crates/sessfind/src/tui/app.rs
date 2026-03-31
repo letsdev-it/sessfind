@@ -101,7 +101,7 @@ pub struct App<'a> {
 }
 
 impl<'a> App<'a> {
-    pub fn new(engine: &'a IndexEngine) -> anyhow::Result<Self> {
+    pub fn new(engine: &'a IndexEngine, initial_mode: Option<&str>) -> anyhow::Result<Self> {
         let all_chunks = engine.list_all_chunks()?;
 
         // Build available modes: FTS, Fuzzy, [Semantic], [LLM backends]
@@ -112,6 +112,19 @@ impl<'a> App<'a> {
         for backend in llm::detect_backends() {
             available_modes.push(SearchMode::Llm(backend));
         }
+
+        // Resolve initial mode index
+        let mode_index = initial_mode
+            .and_then(|m| {
+                let m = m.to_lowercase();
+                available_modes.iter().position(|mode| match mode {
+                    SearchMode::Fts => m == "fts",
+                    SearchMode::Fuzzy => m == "fuzzy",
+                    SearchMode::Semantic => m == "semantic",
+                    SearchMode::Llm(_) => m == "llm",
+                })
+            })
+            .unwrap_or(0);
 
         // Show all sessions initially (deduplicated)
         let results = dedup_by_session(&all_chunks);
@@ -126,7 +139,7 @@ impl<'a> App<'a> {
             detail_chunks: Vec::new(),
             detail_scroll: 0,
             available_modes,
-            mode_index: 0,
+            mode_index,
             semantic_searching: false,
             llm_searching: false,
             focus: Focus::Search,

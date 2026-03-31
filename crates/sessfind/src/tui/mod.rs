@@ -18,14 +18,14 @@ use crate::indexer::engine::IndexEngine;
 
 pub use app::ResumeCommand;
 
-pub fn run(engine: &IndexEngine) -> Result<Option<ResumeCommand>> {
+pub fn run(engine: &IndexEngine, initial_mode: Option<&str>) -> Result<Option<ResumeCommand>> {
     // Setup terminal
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = app::App::new(engine)?;
+    let mut app = app::App::new(engine, initial_mode)?;
 
     // Main loop
     loop {
