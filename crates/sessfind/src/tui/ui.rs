@@ -30,7 +30,7 @@ const BANNER_FIND_START_COL: usize = 24;
 const BANNER_I_DOT_ROW: usize = 1;
 const BANNER_I_DOT_COLS: std::ops::RangeInclusive<usize> = 29..=30;
 
-pub fn draw(f: &mut Frame, app: &App) {
+pub fn draw(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -150,7 +150,7 @@ fn draw_banner(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn draw_main_area(f: &mut Frame, app: &App, area: Rect) {
+fn draw_main_area(f: &mut Frame, app: &mut App, area: Rect) {
     let panes = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
@@ -301,7 +301,7 @@ fn draw_results_list(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(info_line, info_area);
 }
 
-fn draw_detail_pane(f: &mut Frame, app: &App, area: Rect) {
+fn draw_detail_pane(f: &mut Frame, app: &mut App, area: Rect) {
     let border_style = if app.focus == Focus::Results && app.results_pane == ResultsPane::Preview {
         Style::default().fg(ACCENT)
     } else {
@@ -423,6 +423,11 @@ fn draw_detail_pane(f: &mut Frame, app: &App, area: Rect) {
         }
         lines.push(Line::from(""));
     }
+
+    // Clamp scroll to prevent u16 overflow in ratatui's Paragraph rendering
+    // (internally computes `area.height + scroll.y` as u16).
+    let max_safe_scroll = (u16::MAX - content_area.height) as usize;
+    app.detail_scroll = app.detail_scroll.min(max_safe_scroll);
 
     let paragraph = Paragraph::new(lines)
         .block(block)
@@ -553,13 +558,10 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     ));
                     spans.push(Span::styled("scroll", Style::default().fg(Color::White)));
                     spans.push(Span::styled(
-                        "  PgUp/PgDn ",
+                        "  PgUp ",
                         Style::default().fg(Color::DarkGray),
                     ));
-                    spans.push(Span::styled(
-                        "top/bottom",
-                        Style::default().fg(Color::White),
-                    ));
+                    spans.push(Span::styled("top", Style::default().fg(Color::White)));
                 }
             }
 
@@ -729,7 +731,7 @@ fn draw_help_popup(f: &mut Frame, area: Rect, scroll: usize) {
             Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
-            "   PgUp/PgDn     scroll preview pane",
+            "   PgUp          jump to top of preview",
             Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(

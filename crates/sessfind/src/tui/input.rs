@@ -151,7 +151,6 @@ fn handle_results_key(app: &mut App, key: KeyEvent) {
         },
         KeyCode::Enter => app.resume_selected(),
         KeyCode::PageUp => app.scroll_detail_top(),
-        KeyCode::PageDown => app.scroll_detail_bottom(),
         _ => {}
     }
 }
