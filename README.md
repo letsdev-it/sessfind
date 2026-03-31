@@ -1,6 +1,8 @@
 ![Rust](https://img.shields.io/badge/rust-stable-orange?logo=rust)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
+[![sessfind](https://img.shields.io/crates/v/sessfind?label=sessfind)](https://crates.io/crates/sessfind)
+[![sessfind-semantic](https://img.shields.io/crates/v/sessfind-semantic?label=sessfind-semantic)](https://crates.io/crates/sessfind-semantic)
 
 # sessfind
 
