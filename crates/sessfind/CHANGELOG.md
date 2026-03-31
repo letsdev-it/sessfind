@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.7.1...sessfind-v0.7.2) - 2026-03-31
+
+### Added
+
+- *(tui)* add pane navigation, dynamic status bar, and F1 help
+
+### Fixed
+
+- *(tui)* prevent overflow in scroll_detail_bottom
+- *(tui)* restrict mode switch to search, PgUp/PgDn jump to top/bottom
+- *(indexer)* keep consecutive assistant messages in chunks
+
 ## [0.7.1](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.7.0...sessfind-v0.7.1) - 2026-03-30
 
 ### Added
