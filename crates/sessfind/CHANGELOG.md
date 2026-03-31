@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.7.2...sessfind-v0.7.3) - 2026-03-31
+
+### Added
+
+- *(search)* implement real fuzzy search with Levenshtein distance
+- add --mode flag, regenerate docs assets
+
+### Other
+
+- Merge pull request #50 from letsdev-it/chore/update-docs-assets
+
 ## [0.7.2](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.7.1...sessfind-v0.7.2) - 2026-03-31
 
 ### Added
