@@ -903,9 +903,8 @@ fn draw_resume_confirm_popup(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn short_project(project: &str) -> String {
-    // Extract last path component
     project
-        .rsplit('/')
+        .rsplit(['/', '\\'])
         .find(|s| !s.is_empty())
         .unwrap_or(project)
         .to_string()

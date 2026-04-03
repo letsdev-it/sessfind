@@ -6,7 +6,6 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-use crate::config;
 use crate::models::{Message, Role, Session, Source};
 use crate::sources::SessionSource;
 
@@ -14,10 +13,17 @@ pub struct ClaudeCodeSource {
     projects_dir: PathBuf,
 }
 
+fn projects_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".claude")
+        .join("projects")
+}
+
 impl ClaudeCodeSource {
     pub fn new() -> Self {
         Self {
-            projects_dir: config::claude_projects_dir(),
+            projects_dir: projects_dir(),
         }
     }
 }
@@ -47,49 +53,11 @@ struct RawMessage {
 }
 
 fn decode_project_path(encoded: &str) -> String {
-    // "-Users-m-repos-foo-bar" -> "/Users/m/repos/foo-bar"
-    // The encoding replaces '/' with '-', so we need to find path separators
-    // Heuristic: known path prefixes help us decode correctly
-    if !encoded.starts_with('-') {
-        return encoded.to_string();
-    }
-
-    // Try to find the actual directory on disk by progressively resolving segments
-    let without_leading = &encoded[1..]; // strip leading '-'
-    let segments: Vec<&str> = without_leading.split('-').collect();
-
-    let mut path = String::from("/");
-    let mut i = 0;
-    while i < segments.len() {
-        // Try single segment first
-        let candidate = format!("{}{}", path, segments[i]);
-        if std::path::Path::new(&candidate).exists() {
-            path = format!("{}/", candidate);
-            i += 1;
-        } else {
-            // Try joining with next segments using '-' (for dirs like "session-seek")
-            let mut found = false;
-            for j in (i + 1..segments.len()).rev() {
-                let joined = segments[i..=j].join("-");
-                let candidate = format!("{}{}", path, joined);
-                if std::path::Path::new(&candidate).exists() {
-                    path = format!("{}/", candidate);
-                    i = j + 1;
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                // Fallback: treat remaining as single joined segment
-                let remaining = segments[i..].join("-");
-                path = format!("{}{}", path, remaining);
-                break;
-            }
-        }
-    }
-
-    // Remove trailing slash
-    path.trim_end_matches('/').to_string()
+    // Claude Code encodes paths with a leading `-` for root:
+    //   "-Users-m-repos-foo-bar" → "/Users/m/repos/foo-bar"
+    let (remaining, root) = crate::platform::paths::decode_path_root(encoded, true);
+    let segments: Vec<&str> = remaining.split('-').collect();
+    crate::platform::paths::reconstruct_path(&segments, &root)
 }
 
 fn extract_text_from_content(content: &serde_json::Value) -> (String, Vec<String>) {
@@ -358,5 +326,9 @@ impl SessionSource for ClaudeCodeSource {
         }
 
         Ok(messages)
+    }
+
+    fn watch_dirs(&self) -> Vec<(PathBuf, bool)> {
+        vec![(self.projects_dir.clone(), true)]
     }
 }

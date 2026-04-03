@@ -111,23 +111,22 @@ fn run_index() -> Result<usize> {
 
 /// Collect directories to watch (only those that exist on disk).
 fn watch_dirs() -> Vec<(&'static str, PathBuf, bool)> {
-    let candidates: Vec<(&str, PathBuf, bool)> = vec![
-        ("claude", config::claude_projects_dir(), true),
-        ("copilot", config::copilot_session_dir(), true),
-        (
-            "opencode",
-            config::opencode_db_path()
-                .parent()
-                .unwrap_or(&config::opencode_db_path())
-                .to_path_buf(),
-            false,
-        ),
-        ("cursor", config::cursor_projects_dir(), true),
-        ("codex", config::codex_sessions_dir(), true),
+    let sources: Vec<Box<dyn SessionSource>> = vec![
+        Box::new(ClaudeCodeSource::new()),
+        Box::new(CopilotSource::new()),
+        Box::new(OpenCodeSource::new()),
+        Box::new(CursorSource::new()),
+        Box::new(CodexSource::new()),
     ];
 
-    candidates
+    sources
         .into_iter()
-        .filter(|(_, path, _)| path.exists())
+        .flat_map(|src| {
+            let name = src.name();
+            src.watch_dirs()
+                .into_iter()
+                .filter(|(path, _)| path.exists())
+                .map(move |(path, recursive)| (name, path, recursive))
+        })
         .collect()
 }

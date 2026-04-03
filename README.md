@@ -1,6 +1,6 @@
 ![Rust](https://img.shields.io/badge/rust-stable-orange?logo=rust)
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)
 [![sessfind](https://img.shields.io/crates/v/sessfind?label=sessfind)](https://crates.io/crates/sessfind)
 [![sessfind-semantic](https://img.shields.io/crates/v/sessfind-semantic?label=sessfind-semantic)](https://crates.io/crates/sessfind-semantic)
 
@@ -42,6 +42,8 @@
 | **OpenCode** | `~/.local/share/opencode/opencode.db` | `opencode --session SESSION_ID` |
 | **Cursor** | `~/.cursor/projects/*/agent-transcripts/` | `cursor PROJECT_PATH` |
 | **Codex** | `~/.codex/sessions/YYYY/MM/DD/*.jsonl` | `codex resume SESSION_ID` |
+
+> **Windows:** `~` maps to `%USERPROFILE%` (e.g. `C:\Users\<you>`). OpenCode uses `%LOCALAPPDATA%\opencode\opencode.db`.
 
 ## Quick Install
 

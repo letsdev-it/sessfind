@@ -7,7 +7,10 @@ pub use sessfind_common::CHUNK_MAX_CHARS;
 pub use sessfind_common::CHUNK_MIN_CHARS;
 pub use sessfind_common::data_dir;
 
-/// Path to config file: ~/.config/sessfind/config.json
+/// Path to config file.
+///
+/// - Unix/macOS: `~/.config/sessfind/config.json`
+/// - Windows: `%APPDATA%\sessfind\config.json`
 pub fn config_path() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| {
@@ -51,44 +54,6 @@ impl Config {
     pub fn llm_model(&self, backend_name: &str) -> Option<&str> {
         self.llm_models.get(backend_name).map(|s| s.as_str())
     }
-}
-
-pub fn claude_projects_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".claude")
-        .join("projects")
-}
-
-pub fn opencode_db_path() -> PathBuf {
-    // OpenCode stores its DB in XDG_DATA_HOME (~/.local/share on Linux/macOS)
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".local")
-        .join("share")
-        .join("opencode")
-        .join("opencode.db")
-}
-
-pub fn copilot_session_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".copilot")
-        .join("session-state")
-}
-
-pub fn cursor_projects_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".cursor")
-        .join("projects")
-}
-
-pub fn codex_sessions_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".codex")
-        .join("sessions")
 }
 
 #[cfg(test)]

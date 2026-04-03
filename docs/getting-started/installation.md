@@ -15,8 +15,9 @@ Each [release](https://github.com/letsdev-it/sessfind/releases) includes prebuil
 
 - Linux x86_64 / aarch64
 - macOS Intel / Apple Silicon
+- Windows x86_64 / ARM64
 
-Download the `tar.gz` for your platform, unpack, and put `sessfind` on your `PATH`. SHA256 checksums are included for verification.
+Download the archive for your platform (`.tar.gz` on Linux/macOS, `.zip` on Windows), unpack, and put `sessfind` on your `PATH`. SHA256 checksums are included for verification.
 
 ## From source
 

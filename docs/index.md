@@ -41,6 +41,8 @@
 | **Cursor** | `~/.cursor/projects/*/agent-transcripts/` | `cursor PROJECT_PATH` |
 | **Codex** | `~/.codex/sessions/YYYY/MM/DD/*.jsonl` | `codex resume SESSION_ID` |
 
+> **Windows:** `~` maps to `%USERPROFILE%`. OpenCode uses `%LOCALAPPDATA%\opencode\opencode.db`.
+
 ## Quick Links
 
 <div class="grid cards" markdown>

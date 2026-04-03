@@ -2,9 +2,9 @@ mod config;
 mod indexer;
 mod llm;
 mod models;
+mod platform;
 mod search;
 pub mod semantic;
-mod service;
 mod sources;
 mod tui;
 mod version_check;
@@ -105,7 +105,7 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum WatchAction {
-    /// Install watcher as a system service (launchd on macOS, systemd on Linux)
+    /// Install watcher as a system service (launchd / systemd / Task Scheduler)
     Install,
     /// Remove the watcher system service
     Uninstall,
@@ -469,9 +469,9 @@ fn main() -> Result<()> {
         }
         Commands::Watch { action } => match action {
             None => watcher::run()?,
-            Some(WatchAction::Install) => service::install()?,
-            Some(WatchAction::Uninstall) => service::uninstall()?,
-            Some(WatchAction::Status) => service::status()?,
+            Some(WatchAction::Install) => platform::service::install()?,
+            Some(WatchAction::Uninstall) => platform::service::uninstall()?,
+            Some(WatchAction::Status) => platform::service::status()?,
         },
     }
 
@@ -479,19 +479,7 @@ fn main() -> Result<()> {
 }
 
 fn exec_resume(resume: &tui::ResumeCommand) -> Result<()> {
-    use std::os::unix::process::CommandExt;
-    let mut command = std::process::Command::new(&resume.args[0]);
-    command.args(&resume.args[1..]);
-    // Claude Code requires being in the project directory to find the session
-    if let Some(ref cwd) = resume.cwd {
-        let path = std::path::Path::new(cwd);
-        if path.is_dir() {
-            command.current_dir(path);
-        }
-    }
-    // Replace current process with the resume command
-    let err = command.exec();
-    Err(anyhow::anyhow!("Failed to exec {}: {err}", resume.args[0]))
+    platform::process::exec_resume(&resume.args, resume.cwd.as_deref())
 }
 
 fn truncate_project(project: &str, max: usize) -> String {
