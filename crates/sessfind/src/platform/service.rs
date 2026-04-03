@@ -3,8 +3,6 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 
-const LABEL: &str = "dev.lets.sessfind.watch";
-
 pub fn install() -> Result<()> {
     platform::install()
 }
@@ -26,6 +24,8 @@ fn bin_path() -> Result<PathBuf> {
 #[cfg(target_os = "macos")]
 mod platform {
     use super::*;
+
+    const LABEL: &str = "dev.lets.sessfind.watch";
 
     fn plist_path() -> PathBuf {
         dirs::home_dir()

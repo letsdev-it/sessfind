@@ -189,26 +189,28 @@ mod tests {
 
     #[test]
     fn reconstruct_nonexistent_path_joins_all_with_dashes() {
-        // When no segments exist on disk, all remaining segments are joined
-        let result = reconstruct_path(&["zzz_fake", "path", "that", "does", "not", "exist"], "/");
-        assert_eq!(result, "/zzz_fake-path-that-does-not-exist");
+        let sep = std::path::MAIN_SEPARATOR;
+        let root = format!("{sep}");
+        let result = reconstruct_path(&["zzz_fake", "path", "that", "does", "not", "exist"], &root);
+        assert_eq!(result, format!("{sep}zzz_fake-path-that-does-not-exist"));
     }
 
     #[test]
     fn reconstruct_empty_segments() {
-        let result = reconstruct_path(&[], "/some/root/");
-        // Trailing separator is trimmed
-        assert_eq!(result, "/some/root");
+        let sep = std::path::MAIN_SEPARATOR;
+        let root = format!("{sep}some{sep}root{sep}");
+        let result = reconstruct_path(&[], &root);
+        assert_eq!(result, format!("{sep}some{sep}root"));
     }
 
     #[test]
     fn reconstruct_resolves_existing_dirs() {
-        // Create a temp directory tree to probe against
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path();
         std::fs::create_dir_all(base.join("aaa").join("bbb")).unwrap();
 
-        let root = format!("{}/", base.display());
+        let sep = std::path::MAIN_SEPARATOR;
+        let root = format!("{}{sep}", base.display());
         let result = reconstruct_path(&["aaa", "bbb"], &root);
 
         let expected = base.join("aaa").join("bbb");
@@ -217,13 +219,12 @@ mod tests {
 
     #[test]
     fn reconstruct_resolves_dashed_dir_name() {
-        // Simulate a directory named "my-project" (contains a dash)
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path();
         std::fs::create_dir_all(base.join("my-project").join("src")).unwrap();
 
-        let root = format!("{}/", base.display());
-        // Segments "my", "project", "src" should resolve "my-project" then "src"
+        let sep = std::path::MAIN_SEPARATOR;
+        let root = format!("{}{sep}", base.display());
         let result = reconstruct_path(&["my", "project", "src"], &root);
 
         let expected = base.join("my-project").join("src");
