@@ -8,7 +8,7 @@ Below are several ways to automate this — pick whichever suits your workflow.
 ## Option 1: `sessfind watch` (recommended)
 
 A background daemon that monitors session directories and re-indexes automatically when files change.
-Uses OS-level file watching (FSEvents on macOS, inotify on Linux) — essentially zero CPU when idle.
+Uses OS-level file watching (FSEvents on macOS, inotify on Linux, ReadDirectoryChangesW on Windows) — essentially zero CPU when idle.
 
 ### Run in foreground
 
@@ -31,6 +31,9 @@ that starts on login and auto-restarts on crash. Logs go to `~/Library/Logs/sess
 
 On **Linux** this creates a systemd user service (`~/.config/systemd/user/sessfind-watch.service`).
 View logs with `journalctl --user -u sessfind-watch -f`.
+
+On **Windows** this creates a scheduled task (`sessfind-watch`) via Task Scheduler that
+runs at logon. Check status in Task Scheduler or with `schtasks /Query /TN sessfind-watch`.
 
 ---
 
@@ -67,6 +70,12 @@ sessfind index >/dev/null 2>&1 &
 
 ```fish
 sessfind index >/dev/null 2>&1 &
+```
+
+**PowerShell** (`$PROFILE`):
+
+```powershell
+Start-Process -NoNewWindow -FilePath sessfind -ArgumentList "index" *> $null
 ```
 
 The incremental index is fast (milliseconds when nothing changed), so you won't notice any delay.
@@ -124,6 +133,18 @@ Enable with:
 ```bash
 systemctl --user daemon-reload
 systemctl --user enable --now sessfind-index.timer
+```
+
+### Windows (Task Scheduler)
+
+```powershell
+schtasks /Create /TN "sessfind-index" /TR "sessfind index" /SC MINUTE /MO 10 /RL LIMITED /F
+```
+
+Remove with:
+
+```powershell
+schtasks /Delete /TN "sessfind-index" /F
 ```
 
 ---

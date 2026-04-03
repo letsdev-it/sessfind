@@ -3,16 +3,27 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::fs;
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 
-use crate::config;
 use crate::models::{Message, Role, Session, Source};
 use crate::sources::SessionSource;
 
-pub struct CopilotSource;
+pub struct CopilotSource {
+    session_dir: PathBuf,
+}
+
+fn session_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".copilot")
+        .join("session-state")
+}
 
 impl CopilotSource {
     pub fn new() -> Self {
-        Self
+        Self {
+            session_dir: session_dir(),
+        }
     }
 }
 
@@ -40,14 +51,14 @@ impl SessionSource for CopilotSource {
     }
 
     fn list_sessions(&self) -> Result<Vec<Session>> {
-        let session_dir = config::copilot_session_dir();
+        let session_dir = &self.session_dir;
         if !session_dir.exists() {
             return Ok(vec![]);
         }
 
         let mut sessions = Vec::new();
 
-        for entry in fs::read_dir(&session_dir)? {
+        for entry in fs::read_dir(session_dir)? {
             let entry = entry?;
             let path = entry.path();
             if !path.is_dir() {
@@ -175,5 +186,9 @@ impl SessionSource for CopilotSource {
         }
 
         Ok(messages)
+    }
+
+    fn watch_dirs(&self) -> Vec<(PathBuf, bool)> {
+        vec![(self.session_dir.clone(), true)]
     }
 }

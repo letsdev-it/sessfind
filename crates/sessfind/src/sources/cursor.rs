@@ -6,7 +6,6 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-use crate::config;
 use crate::models::{Message, Role, Session, Source};
 use crate::sources::SessionSource;
 
@@ -14,10 +13,17 @@ pub struct CursorSource {
     projects_dir: PathBuf,
 }
 
+fn projects_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".cursor")
+        .join("projects")
+}
+
 impl CursorSource {
     pub fn new() -> Self {
         Self {
-            projects_dir: config::cursor_projects_dir(),
+            projects_dir: projects_dir(),
         }
     }
 }
@@ -35,39 +41,13 @@ struct CursorMessage {
 
 /// Decode a Cursor project directory name back to a filesystem path.
 ///
-/// Cursor encodes `/` as `-` without a leading `-` prefix:
-/// `Users-m-repos-foo-bar` → `/Users/m/repos/foo-bar`
+/// Cursor encodes path separators as `-` (no leading dash):
+/// - Unix:    `Users-m-repos-foo-bar` → `/Users/m/repos/foo-bar`
+/// - Windows: `C-Users-m-repos-foo`  → `C:\Users\m\repos\foo`
 fn decode_project_path(encoded: &str) -> String {
-    let segments: Vec<&str> = encoded.split('-').collect();
-
-    let mut path = String::from("/");
-    let mut i = 0;
-    while i < segments.len() {
-        let candidate = format!("{}{}", path, segments[i]);
-        if Path::new(&candidate).exists() {
-            path = format!("{}/", candidate);
-            i += 1;
-        } else {
-            let mut found = false;
-            for j in (i + 1..segments.len()).rev() {
-                let joined = segments[i..=j].join("-");
-                let candidate = format!("{}{}", path, joined);
-                if Path::new(&candidate).exists() {
-                    path = format!("{}/", candidate);
-                    i = j + 1;
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                let remaining = segments[i..].join("-");
-                path = format!("{}{}", path, remaining);
-                break;
-            }
-        }
-    }
-
-    path.trim_end_matches('/').to_string()
+    let (remaining, root) = crate::platform::paths::decode_path_root(encoded, false);
+    let segments: Vec<&str> = remaining.split('-').collect();
+    crate::platform::paths::reconstruct_path(&segments, &root)
 }
 
 fn extract_text_from_content(content: &serde_json::Value) -> (String, Vec<String>) {
@@ -236,6 +216,10 @@ impl SessionSource for CursorSource {
         }
 
         Ok(messages)
+    }
+
+    fn watch_dirs(&self) -> Vec<(PathBuf, bool)> {
+        vec![(self.projects_dir.clone(), true)]
     }
 }
 

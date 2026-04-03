@@ -7,7 +7,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
-use crate::config;
 use crate::models::{Message, Role, Session, Source};
 use crate::sources::SessionSource;
 
@@ -15,10 +14,17 @@ pub struct CodexSource {
     sessions_dir: PathBuf,
 }
 
+fn sessions_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".codex")
+        .join("sessions")
+}
+
 impl CodexSource {
     pub fn new() -> Self {
         Self {
-            sessions_dir: config::codex_sessions_dir(),
+            sessions_dir: sessions_dir(),
         }
     }
 }
@@ -272,6 +278,10 @@ impl SessionSource for CodexSource {
         }
 
         Ok(messages)
+    }
+
+    fn watch_dirs(&self) -> Vec<(PathBuf, bool)> {
+        vec![(self.sessions_dir.clone(), true)]
     }
 }
 

@@ -20,15 +20,31 @@ The `~/.claude/skills/` directory is shared by **Claude Code**, **GitHub Copilot
 
 ### Copy
 
-```bash
-cp -r skills/sessfind ~/.claude/skills/sessfind
-```
+=== "macOS / Linux"
+
+    ```bash
+    cp -r skills/sessfind ~/.claude/skills/sessfind
+    ```
+
+=== "Windows"
+
+    ```powershell
+    xcopy /E /I skills\sessfind %USERPROFILE%\.claude\skills\sessfind
+    ```
 
 ### Symlink (recommended — stays in sync with the repo)
 
-```bash
-ln -s "$(pwd)/skills/sessfind" ~/.claude/skills/sessfind
-```
+=== "macOS / Linux"
+
+    ```bash
+    ln -s "$(pwd)/skills/sessfind" ~/.claude/skills/sessfind
+    ```
+
+=== "Windows (PowerShell as Admin)"
+
+    ```powershell
+    New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.claude\skills\sessfind" -Target "$(Get-Location)\skills\sessfind"
+    ```
 
 ### Alternative: add the repo's skill directory
 

@@ -14,7 +14,8 @@ fn find_plugin() -> Option<PathBuf> {
     if let Ok(self_path) = std::env::current_exe()
         && let Some(dir) = self_path.parent()
     {
-        let sibling = dir.join(PLUGIN_NAME);
+        let name = format!("{PLUGIN_NAME}{}", std::env::consts::EXE_SUFFIX);
+        let sibling = dir.join(name);
         if sibling.exists() {
             return Some(sibling);
         }

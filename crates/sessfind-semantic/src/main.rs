@@ -72,7 +72,8 @@ fn find_sessfind() -> Result<std::path::PathBuf> {
     if let Ok(self_path) = std::env::current_exe()
         && let Some(dir) = self_path.parent()
     {
-        let sibling = dir.join("sessfind");
+        let name = format!("sessfind{}", std::env::consts::EXE_SUFFIX);
+        let sibling = dir.join(name);
         if sibling.exists() {
             return Ok(sibling);
         }
@@ -137,7 +138,7 @@ fn cmd_index(force: bool) -> Result<()> {
             .map(|c| {
                 let mut enriched = String::new();
                 // Add project name for context
-                if let Some(name) = c.project.rsplit('/').next()
+                if let Some(name) = c.project.rsplit(['/', '\\']).next()
                     && !name.is_empty()
                 {
                     enriched.push_str("Project: ");

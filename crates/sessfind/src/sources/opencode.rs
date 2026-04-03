@@ -1,16 +1,22 @@
 use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
 use rusqlite::Connection;
+use std::path::PathBuf;
 
-use crate::config;
 use crate::models::{Message, Role, Session, Source};
 use crate::sources::SessionSource;
 
-pub struct OpenCodeSource;
+pub struct OpenCodeSource {
+    db_path: PathBuf,
+}
+
+fn db_path() -> PathBuf {
+    crate::platform::paths::opencode_data_dir().join("opencode.db")
+}
 
 impl OpenCodeSource {
     pub fn new() -> Self {
-        Self
+        Self { db_path: db_path() }
     }
 }
 
@@ -20,14 +26,13 @@ impl SessionSource for OpenCodeSource {
     }
 
     fn list_sessions(&self) -> Result<Vec<Session>> {
-        let db_path = config::opencode_db_path();
+        let db_path = &self.db_path;
         if !db_path.exists() {
             return Ok(vec![]);
         }
 
-        let conn =
-            Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-                .with_context(|| format!("Failed to open OpenCode DB: {}", db_path.display()))?;
+        let conn = Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .with_context(|| format!("Failed to open OpenCode DB: {}", db_path.display()))?;
 
         let mut stmt = conn.prepare(
             "SELECT s.id, s.title, s.directory, s.time_created, s.time_updated,
@@ -86,9 +91,9 @@ impl SessionSource for OpenCodeSource {
     }
 
     fn load_messages(&self, session: &Session) -> Result<Vec<Message>> {
-        let db_path = config::opencode_db_path();
+        let db_path = &self.db_path;
         let conn =
-            Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+            Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
 
         // Get messages with their text parts
         let mut stmt = conn.prepare(
@@ -152,5 +157,14 @@ impl SessionSource for OpenCodeSource {
         }
 
         Ok(messages)
+    }
+
+    fn watch_dirs(&self) -> Vec<(PathBuf, bool)> {
+        // Watch the directory containing opencode.db, non-recursively
+        if let Some(parent) = self.db_path.parent() {
+            vec![(parent.to_path_buf(), false)]
+        } else {
+            vec![]
+        }
     }
 }
