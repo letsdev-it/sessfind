@@ -20,7 +20,20 @@ cargo install --path crates/sessfind-semantic
 ## How it works
 
 1. **Embedding generation** — the plugin processes all indexed session chunks using the `multilingual-e5-small` model (~450MB, downloaded on first use). Each chunk is converted to a 384-dimension vector.
-2. **Storage** — embeddings are stored in a local `sqlite-vec` database at `~/.local/share/sessfind/semantic.db`.
+2. **Storage** — embeddings are stored in a local `sqlite-vec` database:
+
+    === "macOS / Linux"
+
+        ```
+        ~/.local/share/sessfind/semantic.db
+        ```
+
+    === "Windows"
+
+        ```
+        %LOCALAPPDATA%\sessfind\semantic.db
+        ```
+
 3. **Search** — at query time, your input is embedded and compared against stored vectors via cosine similarity.
 
 !!! note "First run"

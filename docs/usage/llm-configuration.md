@@ -31,9 +31,17 @@ The `stats` command shows active LLM backends and any model overrides.
 
 Configuration is stored at:
 
-```
-~/.config/sessfind/config.json
-```
+=== "macOS / Linux"
+
+    ```
+    ~/.config/sessfind/config.json
+    ```
+
+=== "Windows"
+
+    ```
+    %APPDATA%\sessfind\config.json
+    ```
 
 ## TUI badge display
 
