@@ -1,4 +1,6 @@
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 
 use anyhow::{Context, Result};
