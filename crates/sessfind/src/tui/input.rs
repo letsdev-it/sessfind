@@ -80,6 +80,9 @@ fn handle_search_key(app: &mut App, key: KeyEvent) {
             app.cursor_pos = 0;
             app.on_input_changed();
         }
+        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.toggle_sort();
+        }
         KeyCode::Char(c) => {
             app.input.insert(app.cursor_pos, c);
             app.cursor_pos += c.len_utf8();

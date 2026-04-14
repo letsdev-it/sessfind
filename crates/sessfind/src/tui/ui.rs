@@ -283,16 +283,17 @@ fn draw_results_list(f: &mut Frame, app: &App, area: Rect) {
 
     // Fixed info line at bottom with bottom border
     let count = app.results.len();
+    let sort_label = app.sort_order.label();
     let limit_info = if app.input.is_empty() {
-        format!(" {} sessions | date: last activity", count)
+        format!(" {} sessions | ⇅ {}", count, sort_label)
     } else {
-        format!(" {} results (max 50) | date: last activity", count)
+        format!(" {} results (max 50) | ⇅ {}", count, sort_label)
     };
 
-    let info_line = Paragraph::new(Line::from(Span::styled(
+    let info_line = Paragraph::new(Line::from(vec![Span::styled(
         limit_info,
         Style::default().fg(Color::DarkGray),
-    )))
+    )]))
     .block(
         Block::default()
             .borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT)
@@ -518,6 +519,11 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
             ));
             spans.push(Span::styled("clear", Style::default().fg(Color::White)));
             spans.push(Span::styled(
+                "  Ctrl+S ",
+                Style::default().fg(Color::DarkGray),
+            ));
+            spans.push(Span::styled("sort", Style::default().fg(Color::White)));
+            spans.push(Span::styled(
                 "  Enter ",
                 Style::default().fg(Color::DarkGray),
             ));
@@ -740,6 +746,10 @@ fn draw_help_popup(f: &mut Frame, area: Rect, scroll: usize) {
         )),
         Line::from(Span::styled(
             "   Ctrl+U        clear search input",
+            Style::default().fg(Color::Reset),
+        )),
+        Line::from(Span::styled(
+            "   Ctrl+S        toggle sort order (newest first / best match)",
             Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(

@@ -38,6 +38,30 @@ impl SearchMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortOrder {
+    /// Time descending (newest first), then score descending as tiebreaker.
+    TimeDesc,
+    /// Score descending (best match first), then time descending as tiebreaker.
+    ScoreDesc,
+}
+
+impl SortOrder {
+    pub fn label(&self) -> &'static str {
+        match self {
+            SortOrder::TimeDesc => "Newest first",
+            SortOrder::ScoreDesc => "Best match",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            SortOrder::TimeDesc => SortOrder::ScoreDesc,
+            SortOrder::ScoreDesc => SortOrder::TimeDesc,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     Search,
     Results,
@@ -88,6 +112,7 @@ pub struct App<'a> {
     pub llm_searching: bool,
     pub focus: Focus,
     pub results_pane: ResultsPane,
+    pub sort_order: SortOrder,
     pub should_quit: bool,
     pub resume_session: Option<(String, Source, String)>, // (session_id, source, project)
     pub confirm_resume: Option<ResumeConfirmState>,
@@ -127,7 +152,7 @@ impl<'a> App<'a> {
             .unwrap_or(0);
 
         // Show all sessions initially (deduplicated)
-        let results = dedup_by_session(&all_chunks);
+        let results = dedup_by_session(&all_chunks, SortOrder::TimeDesc);
 
         let update_rx = crate::version_check::check_latest_version_async();
 
@@ -144,6 +169,7 @@ impl<'a> App<'a> {
             llm_searching: false,
             focus: Focus::Search,
             results_pane: ResultsPane::List,
+            sort_order: SortOrder::TimeDesc,
             should_quit: false,
             resume_session: None,
             confirm_resume: None,
@@ -169,7 +195,7 @@ impl<'a> App<'a> {
         self.detail_scroll = 0;
 
         if self.input.is_empty() {
-            self.results = dedup_by_session(&self.all_chunks);
+            self.results = dedup_by_session(&self.all_chunks, self.sort_order);
         } else {
             match self.search_mode().clone() {
                 SearchMode::Fts => self.search_fts(),
@@ -185,7 +211,7 @@ impl<'a> App<'a> {
     /// Mark that semantic search should be triggered on next tick.
     pub fn request_semantic_search(&mut self) {
         if self.input.is_empty() {
-            self.results = dedup_by_session(&self.all_chunks);
+            self.results = dedup_by_session(&self.all_chunks, self.sort_order);
             self.load_detail();
             return;
         }
@@ -209,7 +235,7 @@ impl<'a> App<'a> {
         };
 
         match semantic::search(&params) {
-            Ok(results) => self.results = dedup_by_session(&results),
+            Ok(results) => self.results = dedup_by_session(&results, self.sort_order),
             Err(_) => self.results.clear(),
         }
 
@@ -221,7 +247,7 @@ impl<'a> App<'a> {
     /// Mark that LLM search should be triggered on next tick.
     pub fn request_llm_search(&mut self) {
         if self.input.is_empty() {
-            self.results = dedup_by_session(&self.all_chunks);
+            self.results = dedup_by_session(&self.all_chunks, self.sort_order);
             self.load_detail();
             return;
         }
@@ -275,7 +301,7 @@ impl<'a> App<'a> {
             }
         }
 
-        self.results = dedup_by_session_best_score(&all_results);
+        self.results = dedup_by_session_best_score(&all_results, self.sort_order);
         self.selected = 0;
         self.detail_scroll = 0;
         self.load_detail();
@@ -292,7 +318,7 @@ impl<'a> App<'a> {
         };
 
         match self.engine.search(&params) {
-            Ok(results) => self.results = dedup_by_session(&results),
+            Ok(results) => self.results = dedup_by_session(&results, self.sort_order),
             Err(_) => self.results.clear(),
         }
     }
@@ -308,7 +334,7 @@ impl<'a> App<'a> {
         };
 
         match self.engine.search_fuzzy(&params) {
-            Ok(results) => self.results = dedup_by_session(&results),
+            Ok(results) => self.results = dedup_by_session(&results, self.sort_order),
             Err(_) => self.results.clear(),
         }
     }
@@ -369,6 +395,13 @@ impl<'a> App<'a> {
     pub fn toggle_mode(&mut self) {
         self.mode_index = (self.mode_index + 1) % self.available_modes.len();
         self.on_input_changed();
+    }
+
+    pub fn toggle_sort(&mut self) {
+        self.sort_order = self.sort_order.next();
+        apply_sort(&mut self.results, self.sort_order);
+        self.selected = 0;
+        self.load_detail();
     }
 
     pub fn toggle_focus(&mut self) {
@@ -444,9 +477,32 @@ pub struct ResumeCommand {
     pub cwd: Option<String>,
 }
 
+/// Apply sort order to a results vector in place.
+fn apply_sort(results: &mut [SearchResult], order: SortOrder) {
+    match order {
+        SortOrder::TimeDesc => {
+            results.sort_by(|a, b| {
+                b.timestamp.cmp(&a.timestamp).then_with(|| {
+                    b.score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+            });
+        }
+        SortOrder::ScoreDesc => {
+            results.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| b.timestamp.cmp(&a.timestamp))
+            });
+        }
+    }
+}
+
 /// Dedup by session, keeping the highest-scoring result per session.
-/// Final results sorted by score descending, then by timestamp descending.
-fn dedup_by_session(results: &[SearchResult]) -> Vec<SearchResult> {
+/// Final results sorted according to the given sort order.
+fn dedup_by_session(results: &[SearchResult], order: SortOrder) -> Vec<SearchResult> {
     let mut best: HashMap<String, SearchResult> = HashMap::new();
     for r in results {
         best.entry(r.session_id.clone())
@@ -458,19 +514,14 @@ fn dedup_by_session(results: &[SearchResult]) -> Vec<SearchResult> {
             .or_insert_with(|| r.clone());
     }
     let mut out: Vec<SearchResult> = best.into_values().collect();
-    out.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| b.timestamp.cmp(&a.timestamp))
-    });
+    apply_sort(&mut out, order);
     out
 }
 
 /// Dedup by session, keeping the highest-scoring result per session.
-/// Final results sorted by score descending, then by timestamp descending.
-fn dedup_by_session_best_score(results: &[SearchResult]) -> Vec<SearchResult> {
-    dedup_by_session(results)
+/// Final results sorted according to the given sort order.
+fn dedup_by_session_best_score(results: &[SearchResult], order: SortOrder) -> Vec<SearchResult> {
+    dedup_by_session(results, order)
 }
 
 #[cfg(test)]
@@ -528,7 +579,7 @@ mod tests {
                 score: 0.8,
             },
         ];
-        let deduped = dedup_by_session(&results);
+        let deduped = dedup_by_session(&results, SortOrder::ScoreDesc);
         assert_eq!(deduped.len(), 2);
         assert_eq!(deduped[0].session_id, "s1");
         assert_eq!(deduped[0].chunk_id, "a:s1:0"); // keeps first
@@ -537,7 +588,7 @@ mod tests {
 
     #[test]
     fn dedup_empty() {
-        let deduped = dedup_by_session(&[]);
+        let deduped = dedup_by_session(&[], SortOrder::ScoreDesc);
         assert!(deduped.is_empty());
     }
 
@@ -607,12 +658,101 @@ mod tests {
                 score: 0.9,
             },
         ];
-        let deduped = dedup_by_session_best_score(&results);
+        let deduped = dedup_by_session_best_score(&results, SortOrder::ScoreDesc);
         assert_eq!(deduped.len(), 2);
         // Sorted by score descending
         assert_eq!(deduped[0].session_id, "s1");
         assert_eq!(deduped[0].score, 0.9);
         assert_eq!(deduped[1].session_id, "s2");
         assert_eq!(deduped[1].score, 0.3);
+    }
+
+    #[test]
+    fn sort_order_time_desc_sorts_by_timestamp() {
+        use chrono::Duration;
+
+        let now = Utc::now();
+        let old = now - Duration::hours(2);
+
+        let results = vec![
+            SearchResult {
+                chunk_id: "a:s1:0".into(),
+                session_id: "s1".into(),
+                source: Source::ClaudeCode,
+                project: "/p".into(),
+                timestamp: old,
+                title: None,
+                snippet: "old session".into(),
+                score: 0.9,
+            },
+            SearchResult {
+                chunk_id: "a:s2:0".into(),
+                session_id: "s2".into(),
+                source: Source::OpenCode,
+                project: "/q".into(),
+                timestamp: now,
+                title: None,
+                snippet: "new session".into(),
+                score: 0.5,
+            },
+        ];
+        let deduped = dedup_by_session(&results, SortOrder::TimeDesc);
+        assert_eq!(deduped.len(), 2);
+        // Newest first despite lower score
+        assert_eq!(deduped[0].session_id, "s2");
+        assert_eq!(deduped[1].session_id, "s1");
+    }
+
+    #[test]
+    fn sort_order_toggle_cycles() {
+        assert_eq!(SortOrder::TimeDesc.next(), SortOrder::ScoreDesc);
+        assert_eq!(SortOrder::ScoreDesc.next(), SortOrder::TimeDesc);
+    }
+
+    #[test]
+    fn sort_order_labels() {
+        assert_eq!(SortOrder::TimeDesc.label(), "Newest first");
+        assert_eq!(SortOrder::ScoreDesc.label(), "Best match");
+    }
+
+    #[test]
+    fn apply_sort_reorders_in_place() {
+        use chrono::Duration;
+
+        let now = Utc::now();
+        let old = now - Duration::hours(2);
+
+        let mut results = vec![
+            SearchResult {
+                chunk_id: "a:s1:0".into(),
+                session_id: "s1".into(),
+                source: Source::ClaudeCode,
+                project: "/p".into(),
+                timestamp: old,
+                title: None,
+                snippet: "old high score".into(),
+                score: 0.9,
+            },
+            SearchResult {
+                chunk_id: "a:s2:0".into(),
+                session_id: "s2".into(),
+                source: Source::OpenCode,
+                project: "/q".into(),
+                timestamp: now,
+                title: None,
+                snippet: "new low score".into(),
+                score: 0.5,
+            },
+        ];
+
+        // ScoreDesc: highest score first
+        apply_sort(&mut results, SortOrder::ScoreDesc);
+        assert_eq!(results[0].session_id, "s1");
+        assert_eq!(results[1].session_id, "s2");
+
+        // TimeDesc: newest first
+        apply_sort(&mut results, SortOrder::TimeDesc);
+        assert_eq!(results[0].session_id, "s2");
+        assert_eq!(results[1].session_id, "s1");
     }
 }

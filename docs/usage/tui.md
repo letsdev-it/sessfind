@@ -24,6 +24,7 @@ The TUI opens in full-screen mode with three areas:
 | *Type* | Filter sessions in real-time |
 | `Tab` | Switch focus between search and results |
 | `Shift+Tab` | Toggle search mode (FTS / Fuzzy / LLM / Semantic*) |
+| `Ctrl+S` | Toggle sort order (Newest first / Best match) |
 | `Up/Down`, `j/k` | Navigate results |
 | `Enter` | Resume selected session (opens confirmation dialog) |
 | `PgUp/PgDn` | Scroll session preview |
@@ -33,6 +34,17 @@ The TUI opens in full-screen mode with three areas:
 
 !!! note
     `Semantic` mode is only available when the [`sessfind-semantic`](../plugins/semantic-search.md) plugin is installed.
+
+## Sort Order
+
+Press `Ctrl+S` (while in search focus) to toggle the sort order of results:
+
+| Sort Mode | Description |
+|-----------|-------------|
+| **Newest first** *(default)* | Sessions sorted by time descending, then by relevance score |
+| **Best match** | Sessions sorted by relevance score descending, then by time |
+
+The current sort order is displayed at the bottom of the results list. The setting persists until the application is closed — switching between search and results does not reset it.
 
 ## Resume Confirmation
 
