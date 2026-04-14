@@ -170,7 +170,7 @@ fn draw_results_list(f: &mut Frame, app: &App, area: Rect) {
     // Split into list area + fixed info line at bottom
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(1)])
+        .constraints([Constraint::Min(3), Constraint::Length(2)])
         .split(area);
 
     let list_area = layout[0];
@@ -519,11 +519,6 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
             ));
             spans.push(Span::styled("clear", Style::default().fg(Color::White)));
             spans.push(Span::styled(
-                "  Ctrl+S ",
-                Style::default().fg(Color::DarkGray),
-            ));
-            spans.push(Span::styled("sort", Style::default().fg(Color::White)));
-            spans.push(Span::styled(
                 "  Enter ",
                 Style::default().fg(Color::DarkGray),
             ));
@@ -571,6 +566,11 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                 }
             }
 
+            spans.push(Span::styled(
+                "  Ctrl+S ",
+                Style::default().fg(Color::DarkGray),
+            ));
+            spans.push(Span::styled("sort", Style::default().fg(Color::White)));
             spans.push(Span::styled(
                 "  Enter ",
                 Style::default().fg(Color::DarkGray),
