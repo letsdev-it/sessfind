@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/letsdev-it/sessfind/compare/sessfind-semantic-v0.4.1...sessfind-semantic-v0.5.0) - 2026-04-14
+
+### Added
+
+- *(tui)* add sort order toggle (Ctrl+S) with Newest first / Best match modes
+
 ## [0.4.1](https://github.com/letsdev-it/sessfind/compare/sessfind-semantic-v0.4.0...sessfind-semantic-v0.4.1) - 2026-03-30
 
 ### Other
