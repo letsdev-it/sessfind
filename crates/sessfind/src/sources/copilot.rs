@@ -87,13 +87,28 @@ impl SessionSource for CopilotSource {
                 .unwrap_or_else(Utc::now);
 
             let metadata = fs::metadata(&events_path)?;
-            let file_mtime = metadata
+            let mut file_mtime = metadata
                 .modified()
                 .ok()
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
-            let file_size = metadata.len();
+            let mut file_size = metadata.len();
+
+            // Include plan.md in mtime/size tracking so plan changes trigger re-indexing
+            let plan_path = path.join("plan.md");
+            if plan_path.exists() {
+                if let Ok(plan_meta) = fs::metadata(&plan_path) {
+                    let plan_mtime = plan_meta
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    file_mtime = file_mtime.max(plan_mtime);
+                    file_size += plan_meta.len();
+                }
+            }
 
             let project = cwd.clone().unwrap_or_else(|| "unknown".to_string());
 
@@ -172,6 +187,25 @@ impl SessionSource for CopilotSource {
                 timestamp,
                 tool_names,
             });
+        }
+
+        // Include plan.md content if present in the session directory
+        let session_dir = std::path::Path::new(&session.file_path).parent();
+        if let Some(dir) = session_dir {
+            let plan_path = dir.join("plan.md");
+            if plan_path.exists() {
+                if let Ok(plan_content) = fs::read_to_string(&plan_path) {
+                    let trimmed = plan_content.trim();
+                    if !trimmed.is_empty() {
+                        messages.push(Message {
+                            role: Role::Assistant,
+                            text: format!("[PLAN]\n{trimmed}"),
+                            timestamp: None,
+                            tool_names: vec![],
+                        });
+                    }
+                }
+            }
         }
 
         Ok(messages)
