@@ -73,6 +73,12 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     }
 }
 
+pub fn handle_paste(app: &mut App, text: &str) {
+    app.input.insert_str(app.cursor_pos, text);
+    app.cursor_pos += text.len();
+    app.on_input_changed();
+}
+
 fn handle_search_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {

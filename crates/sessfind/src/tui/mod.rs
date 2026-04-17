@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::ExecutableCommand;
-use crossterm::event::{self, Event};
+use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste, Event};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -22,6 +22,7 @@ pub fn run(engine: &IndexEngine, initial_mode: Option<&str>) -> Result<Option<Re
     // Setup terminal
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
+    stdout().execute(EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
 
@@ -47,12 +48,20 @@ pub fn run(engine: &IndexEngine, initial_mode: Option<&str>) -> Result<Option<Re
             app.latest_version = Some(ver);
         }
 
-        if event::poll(Duration::from_millis(50))?
-            && let Event::Key(key) = event::read()?
-        {
-            // Ignore key release events on some terminals
-            if key.kind == crossterm::event::KeyEventKind::Press {
-                input::handle_key(&mut app, key);
+        if event::poll(Duration::from_millis(50))? {
+            match event::read()? {
+                Event::Key(key) => {
+                    // Ignore key release events on some terminals
+                    if key.kind == crossterm::event::KeyEventKind::Press {
+                        input::handle_key(&mut app, key);
+                    }
+                }
+                Event::Paste(text) => {
+                    if app.focus == app::Focus::Search {
+                        input::handle_paste(&mut app, &text);
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -63,6 +72,7 @@ pub fn run(engine: &IndexEngine, initial_mode: Option<&str>) -> Result<Option<Re
 
     // Restore terminal
     disable_raw_mode()?;
+    stdout().execute(DisableBracketedPaste)?;
     stdout().execute(LeaveAlternateScreen)?;
 
     Ok(app.resume_command())
