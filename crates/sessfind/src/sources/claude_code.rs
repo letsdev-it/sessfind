@@ -334,8 +334,8 @@ impl SessionSource for ClaudeCodeSource {
                 .and_then(|ts| ts.parse::<DateTime<Utc>>().ok());
 
             match entry.entry_type.as_deref() {
-                Some("user") | Some("assistant") => {
-                    let role = if entry.entry_type.as_deref() == Some("user") {
+                Some(t @ "user") | Some(t @ "assistant") => {
+                    let role = if t == "user" {
                         Role::User
                     } else {
                         Role::Assistant
