@@ -499,7 +499,7 @@ impl IndexEngine {
             })
             .collect();
 
-        results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        results.sort_by_key(|r| std::cmp::Reverse(r.timestamp));
         Ok(results)
     }
 
