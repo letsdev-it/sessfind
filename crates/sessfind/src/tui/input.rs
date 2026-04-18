@@ -113,14 +113,12 @@ fn handle_search_key(app: &mut App, key: KeyEvent) {
                     .unwrap_or(0);
             }
         }
-        KeyCode::Right => {
-            if app.cursor_pos < app.input.len() {
-                app.cursor_pos = app.input[app.cursor_pos..]
-                    .char_indices()
-                    .nth(1)
-                    .map(|(i, _)| app.cursor_pos + i)
-                    .unwrap_or(app.input.len());
-            }
+        KeyCode::Right if app.cursor_pos < app.input.len() => {
+            app.cursor_pos = app.input[app.cursor_pos..]
+                .char_indices()
+                .nth(1)
+                .map(|(i, _)| app.cursor_pos + i)
+                .unwrap_or(app.input.len());
         }
         KeyCode::Enter => {
             // Deferred modes: Enter triggers the search

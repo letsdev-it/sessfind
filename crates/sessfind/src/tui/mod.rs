@@ -50,16 +50,14 @@ pub fn run(engine: &IndexEngine, initial_mode: Option<&str>) -> Result<Option<Re
 
         if event::poll(Duration::from_millis(50))? {
             match event::read()? {
-                Event::Key(key) => {
+                Event::Key(key)
                     // Ignore key release events on some terminals
-                    if key.kind == crossterm::event::KeyEventKind::Press {
-                        input::handle_key(&mut app, key);
-                    }
+                    if key.kind == crossterm::event::KeyEventKind::Press =>
+                {
+                    input::handle_key(&mut app, key);
                 }
-                Event::Paste(text) => {
-                    if app.focus == app::Focus::Search {
-                        input::handle_paste(&mut app, &text);
-                    }
+                Event::Paste(text) if app.focus == app::Focus::Search => {
+                    input::handle_paste(&mut app, &text);
                 }
                 _ => {}
             }
