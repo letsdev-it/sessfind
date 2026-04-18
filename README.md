@@ -38,7 +38,7 @@
 | Source | Session Location | Resume Command |
 |--------|-----------------|----------------|
 | **GitHub Copilot** | `~/.copilot/session-state/*/events.jsonl` (+`plan.md`) | `copilot --resume=SESSION_ID` |
-| **Claude Code** | `~/.claude/projects/*/` | `claude --resume SESSION_ID` |
+| **Claude Code** | `~/.claude/projects/*/` (incl. summary & plan entries) | `claude --resume SESSION_ID` |
 | **OpenCode** | `~/.local/share/opencode/opencode.db` | `opencode --session SESSION_ID` |
 | **Cursor** | `~/.cursor/projects/*/agent-transcripts/` | `cursor PROJECT_PATH` |
 | **Codex** | `~/.codex/sessions/YYYY/MM/DD/*.jsonl` | `codex resume SESSION_ID` |

@@ -36,6 +36,13 @@ struct RawEntry {
     git_branch: Option<String>,
     timestamp: Option<String>,
     message: Option<RawMessage>,
+    /// Summary text stored by Claude Code for session summaries / plan results
+    summary: Option<String>,
+    /// Structured plan stored by Claude Code in plan mode (markdown string)
+    #[serde(rename = "planMd")]
+    plan_md: Option<String>,
+    /// Alternate flat plan field (array or string)
+    plan: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -321,40 +328,80 @@ impl SessionSource for ClaudeCodeSource {
                 Err(_) => continue,
             };
 
-            let role = match entry.entry_type.as_deref() {
-                Some("user") => Role::User,
-                Some("assistant") => Role::Assistant,
-                _ => continue,
-            };
-
-            let msg = match &entry.message {
-                Some(m) => m,
-                None => continue,
-            };
-
-            let content = match &msg.content {
-                Some(c) => c,
-                None => continue,
-            };
-
-            let (text, tool_names) = extract_text_from_content(content);
-
-            // Skip empty or system-only messages
-            if text.trim().is_empty() {
-                continue;
-            }
-
             let timestamp = entry
                 .timestamp
                 .as_deref()
                 .and_then(|ts| ts.parse::<DateTime<Utc>>().ok());
 
-            messages.push(Message {
-                role,
-                text,
-                timestamp,
-                tool_names,
-            });
+            match entry.entry_type.as_deref() {
+                Some("user") | Some("assistant") => {
+                    let role = if entry.entry_type.as_deref() == Some("user") {
+                        Role::User
+                    } else {
+                        Role::Assistant
+                    };
+
+                    let msg = match &entry.message {
+                        Some(m) => m,
+                        None => continue,
+                    };
+
+                    let content = match &msg.content {
+                        Some(c) => c,
+                        None => continue,
+                    };
+
+                    let (text, tool_names) = extract_text_from_content(content);
+
+                    if text.trim().is_empty() {
+                        continue;
+                    }
+
+                    messages.push(Message {
+                        role,
+                        text,
+                        timestamp,
+                        tool_names,
+                    });
+                }
+                Some("summary") => {
+                    // Session summaries contain valuable context
+                    if let Some(summary) = &entry.summary {
+                        let trimmed = summary.trim();
+                        if !trimmed.is_empty() {
+                            messages.push(Message {
+                                role: Role::Assistant,
+                                text: format!("[SUMMARY]\n{trimmed}"),
+                                timestamp,
+                                tool_names: vec![],
+                            });
+                        }
+                    }
+                }
+                Some("plan") => {
+                    // Plan entries from Claude Code's plan mode
+                    let plan_text = entry
+                        .plan_md
+                        .as_deref()
+                        .or_else(|| {
+                            entry.plan.as_ref().and_then(|v| match v {
+                                serde_json::Value::String(s) => Some(s.as_str()),
+                                _ => None,
+                            })
+                        })
+                        .unwrap_or("");
+                    let trimmed = plan_text.trim();
+                    if !trimmed.is_empty() {
+                        messages.push(Message {
+                            role: Role::Assistant,
+                            text: format!("[PLAN]\n{trimmed}"),
+                            timestamp,
+                            tool_names: vec![],
+                        });
+                    }
+                }
+                _ => continue,
+            }
         }
 
         Ok(messages)
