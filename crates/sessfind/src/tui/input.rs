@@ -91,27 +91,23 @@ fn handle_search_key(app: &mut App, key: KeyEvent) {
             app.cursor_pos += c.len_utf8();
             app.on_input_changed();
         }
-        KeyCode::Backspace => {
-            if app.cursor_pos > 0 {
-                // Find previous char boundary
-                let prev = app.input[..app.cursor_pos]
-                    .char_indices()
-                    .last()
-                    .map(|(i, _)| i)
-                    .unwrap_or(0);
-                app.input.remove(prev);
-                app.cursor_pos = prev;
-                app.on_input_changed();
-            }
+        KeyCode::Backspace if app.cursor_pos > 0 => {
+            // Find previous char boundary
+            let prev = app.input[..app.cursor_pos]
+                .char_indices()
+                .last()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            app.input.remove(prev);
+            app.cursor_pos = prev;
+            app.on_input_changed();
         }
-        KeyCode::Left => {
-            if app.cursor_pos > 0 {
-                app.cursor_pos = app.input[..app.cursor_pos]
-                    .char_indices()
-                    .last()
-                    .map(|(i, _)| i)
-                    .unwrap_or(0);
-            }
+        KeyCode::Left if app.cursor_pos > 0 => {
+            app.cursor_pos = app.input[..app.cursor_pos]
+                .char_indices()
+                .last()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
         }
         KeyCode::Right if app.cursor_pos < app.input.len() => {
             app.cursor_pos = app.input[app.cursor_pos..]
