@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.8.1...sessfind-v0.8.2) - 2026-04-18
+
+### Added
+
+- *(tui)* handle paste events to avoid per-character search triggers
+
+### Fixed
+
+- use sort_by_key with Reverse instead of sort_by to satisfy clippy
+- *(tui)* collapse remaining collapsible_match warnings for Backspace and Left
+- *(tui)* collapse nested if into match guards to satisfy clippy
+
 ## [0.8.1](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.8.0...sessfind-v0.8.1) - 2026-04-14
 
 ### Fixed
