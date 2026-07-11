@@ -1,5 +1,21 @@
 # Guidelines for AI assistants and contributors
 
+## Product specification and SDD
+
+The product contract for `sessfind` lives in the `letsdev-it/sdd-specs`
+repository. Treat the current product spec as authoritative for observable
+behavior.
+
+- Contract changes start as `spec-feature` or `spec-chore` issues in the spec
+  repository and are implemented only after the resulting code task exists.
+- Bugs and maintenance work start as `code-bug` or `code-chore` issues in the
+  spec repository.
+- Every pull request must close or reference its generated `sdd:task` issue.
+- Do not introduce observable behavior that is absent from, or contradicts,
+  the current product spec. Route contract changes through the spec first.
+- Update the relevant technical-spec document under `spec/` in the same pull
+  request when the implementation architecture or conventions change.
+
 ## Commits
 
 Use **[Conventional Commits](https://www.conventionalcommits.org/)** so tooling (e.g. release-plz) can infer semver and changelogs.
