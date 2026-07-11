@@ -1,0 +1,25 @@
+name: SDD
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  issues:
+    types: [closed]
+
+jobs:
+  task-link:
+    if: github.event_name == 'pull_request'
+    uses: letsdev-it/sdd-workflows/.github/workflows/sdd-task-link.yml@main
+    permissions: { contents: read, issues: read, pull-requests: read }
+
+  conformance:
+    if: github.event_name == 'pull_request'
+    uses: letsdev-it/sdd-workflows/.github/workflows/sdd-conformance.yml@main
+    secrets: inherit
+    permissions: { contents: read, issues: read, pull-requests: read }
+
+  task-done:
+    if: github.event_name == 'issues'
+    uses: letsdev-it/sdd-workflows/.github/workflows/sdd-task-done.yml@main
+    secrets: inherit
+    permissions: { contents: read, issues: read }
