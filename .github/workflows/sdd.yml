@@ -5,6 +5,13 @@ on:
     types: [opened, edited, reopened, synchronize]
   issues:
     types: [closed]
+  issue_comment:
+    types: [created]
+  repository_dispatch:
+    types: [sdd-spec-changed]
+  schedule:
+    - cron: '23 3 * * 1'
+  workflow_dispatch:
 
 jobs:
   task-link:
@@ -12,14 +19,47 @@ jobs:
     uses: letsdev-it/sdd-workflows/.github/workflows/sdd-task-link.yml@main
     permissions: { contents: read, issues: read, pull-requests: read }
 
-  conformance:
+  code-review:
     if: github.event_name == 'pull_request'
     uses: letsdev-it/sdd-workflows/.github/workflows/sdd-conformance.yml@main
     secrets: inherit
-    permissions: { contents: read, issues: read, pull-requests: read }
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      statuses: write
+
+  freshness-invalidation:
+    if: github.event_name == 'repository_dispatch'
+    uses: letsdev-it/sdd-workflows/.github/workflows/sdd-invalidate.yml@main
+    permissions:
+      actions: write
+      pull-requests: read
+      statuses: write
+
+  clarification:
+    if: github.event_name == 'issue_comment'
+    uses: letsdev-it/sdd-workflows/.github/workflows/sdd-clarification.yml@main
+    secrets: inherit
+    permissions:
+      contents: read
+      issues: write
 
   task-done:
     if: github.event_name == 'issues'
     uses: letsdev-it/sdd-workflows/.github/workflows/sdd-task-done.yml@main
     secrets: inherit
-    permissions: { contents: read, issues: read }
+    permissions:
+      checks: read
+      contents: read
+      issues: write
+      pull-requests: read
+      statuses: read
+
+  drift-audit:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    uses: letsdev-it/sdd-workflows/.github/workflows/sdd-drift-audit.yml@main
+    secrets: inherit
+    permissions:
+      contents: read
+      issues: read
