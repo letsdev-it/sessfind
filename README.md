@@ -24,6 +24,7 @@
 
 - Full-text search (BM25 ranking via tantivy) across all your sessions
 - Interactive TUI with split-pane layout, real-time filtering, and session preview
+- **VS Code extension** — browse, search, tag and resume sessions from a sidebar hub ([details](docs/usage/vscode.md))
 - Fuzzy substring matching as alternative search mode
 - **Semantic search** — find conceptually similar sessions using ML embeddings (optional plugin)
 - **LLM search** — agentic search using installed AI CLI tools (Claude Code, OpenCode, Copilot)
@@ -67,6 +68,7 @@ Combine both: `sessfind --index`. See [Quick Start docs](https://letsdev-it.gith
 
 - [Installation](https://letsdev-it.github.io/sessfind/getting-started/installation/)
 - [Interactive TUI & Keybindings](https://letsdev-it.github.io/sessfind/usage/tui/)
+- [VS Code Extension](https://letsdev-it.github.io/sessfind/usage/vscode/)
 - [CLI Commands](https://letsdev-it.github.io/sessfind/usage/cli/)
 - [Search Modes](https://letsdev-it.github.io/sessfind/usage/search-modes/) (FTS, Fuzzy, LLM, Semantic)
 - [LLM Configuration](https://letsdev-it.github.io/sessfind/usage/llm-configuration/)

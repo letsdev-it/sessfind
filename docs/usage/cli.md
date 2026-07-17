@@ -37,6 +37,46 @@ sessfind stats
 
 Shows number of indexed sessions per source, semantic plugin status, and active LLM backends.
 
+## JSON output & session/project listing
+
+Most read commands accept `--json` for machine consumption (used by the
+[VS Code extension](vscode.md) and any other frontend). The JSON shapes are a
+stable, additively-versioned contract; `sessfind capabilities` reports the
+version and what the binary supports.
+
+```bash
+sessfind capabilities                 # features, search methods, data dir (always JSON)
+sessfind search "auth" --json
+sessfind show SESSION_ID --json
+sessfind stats --json
+
+sessfind sessions list                # all indexed sessions, newest first
+sessfind sessions list --json --tag work --user-project backend --limit 20
+sessfind projects list --json         # auto-grouped by directory
+```
+
+## Tags
+
+```bash
+sessfind tag add SESSION_ID work rust
+sessfind tag rm SESSION_ID rust
+sessfind tag list --json
+```
+
+## User projects
+
+A user project has a root directory (where new sessions launch), optional extra
+directories, and manually pinned sessions.
+
+```bash
+sessfind project create backend --root ~/code/backend
+sessfind project add-dir backend ~/code/shared
+sessfind project add-session backend SESSION_ID   # pin
+sessfind project show backend --json
+sessfind project list
+sessfind project delete backend
+```
+
 ## Dump all chunks as JSONL
 
 ```bash
