@@ -84,6 +84,47 @@ pub struct SearchParams {
     pub before: Option<DateTime<Utc>>,
 }
 
+// ── CommandSpec (resume / new-session commands) ──
+
+/// A command to launch in a terminal: `args[0]` is the binary, the rest are
+/// its arguments. `cwd` is the directory the command must run in (Claude Code
+/// requires being in the project directory to find the session).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandSpec {
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+}
+
+/// Build the command that resumes an existing session in the given directory.
+pub fn resume_command(source: Source, session_id: &str, dir: &str) -> CommandSpec {
+    let args = match source {
+        Source::ClaudeCode => vec!["claude".into(), "--resume".into(), session_id.into()],
+        Source::Copilot => vec!["copilot".into(), format!("--resume={session_id}")],
+        Source::OpenCode => vec!["opencode".into(), "--session".into(), session_id.into()],
+        Source::Cursor => vec!["cursor".into(), dir.into()],
+        Source::Codex => vec!["codex".into(), "resume".into(), session_id.into()],
+    };
+    CommandSpec {
+        args,
+        cwd: Some(dir.into()),
+    }
+}
+
+/// Build the command that starts a fresh session of the given tool in a directory.
+pub fn new_session_command(source: Source, dir: &str) -> CommandSpec {
+    let args = match source {
+        Source::ClaudeCode => vec!["claude".into()],
+        Source::Copilot => vec!["copilot".into()],
+        Source::OpenCode => vec!["opencode".into()],
+        Source::Cursor => vec!["cursor".into(), dir.into()],
+        Source::Codex => vec!["codex".into()],
+    };
+    CommandSpec {
+        args,
+        cwd: Some(dir.into()),
+    }
+}
+
 // ── DumpChunk (for dump-chunks JSONL exchange) ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -209,6 +250,47 @@ mod tests {
         assert_eq!(back.query, "rust async");
         assert_eq!(back.limit, 10);
         assert_eq!(back.source.as_deref(), Some("claude"));
+    }
+
+    #[test]
+    fn resume_command_per_source() {
+        let cmd = resume_command(Source::ClaudeCode, "abc", "/proj");
+        assert_eq!(cmd.args, vec!["claude", "--resume", "abc"]);
+        assert_eq!(cmd.cwd.as_deref(), Some("/proj"));
+
+        let cmd = resume_command(Source::Copilot, "abc", "/proj");
+        assert_eq!(cmd.args, vec!["copilot", "--resume=abc"]);
+
+        let cmd = resume_command(Source::OpenCode, "abc", "/proj");
+        assert_eq!(cmd.args, vec!["opencode", "--session", "abc"]);
+
+        let cmd = resume_command(Source::Cursor, "abc", "/proj");
+        assert_eq!(cmd.args, vec!["cursor", "/proj"]);
+
+        let cmd = resume_command(Source::Codex, "abc", "/proj");
+        assert_eq!(cmd.args, vec!["codex", "resume", "abc"]);
+    }
+
+    #[test]
+    fn new_session_command_per_source() {
+        let cmd = new_session_command(Source::ClaudeCode, "/proj");
+        assert_eq!(cmd.args, vec!["claude"]);
+        assert_eq!(cmd.cwd.as_deref(), Some("/proj"));
+
+        let cmd = new_session_command(Source::Cursor, "/proj");
+        assert_eq!(cmd.args, vec!["cursor", "/proj"]);
+
+        let cmd = new_session_command(Source::Codex, "/proj");
+        assert_eq!(cmd.args, vec!["codex"]);
+    }
+
+    #[test]
+    fn command_spec_serde_roundtrip() {
+        let cmd = resume_command(Source::ClaudeCode, "abc", "/proj");
+        let json = serde_json::to_string(&cmd).unwrap();
+        let back: CommandSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.args, cmd.args);
+        assert_eq!(back.cwd, cmd.cwd);
     }
 
     #[test]
