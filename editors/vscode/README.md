@@ -10,9 +10,15 @@ out to the binary and renders its JSON.
 - The `sessfind` binary on your `PATH` (or set `sessfind.binaryPath`).
 - Run `sessfind index` once (or use **Sessfind: Refresh Index**) to build the index.
 
-## Features (this release)
+## Features
 
-- **Projects** view in the activity bar: sessions auto-grouped by directory.
+- **Projects** view: sessions auto-grouped by directory.
+- **My Projects** view: user-defined projects (a root directory plus extra
+  directories and pinned sessions). Create them, add directories, pin sessions.
+- **Tags** view: organise sessions with your own tags.
+- **Search Sessions** command: full-text, fuzzy, semantic and LLM search (only
+  the methods your binary supports are offered). Instant methods search as you
+  type; semantic/LLM run on Enter.
 - Open any session as a rendered Markdown conversation in a tab.
 - Resume a session, or start a new session in its project directory, in an
   integrated terminal.

@@ -29,6 +29,14 @@
         {
           "id": "sessfind.autoProjects",
           "name": "Projects"
+        },
+        {
+          "id": "sessfind.userProjects",
+          "name": "My Projects"
+        },
+        {
+          "id": "sessfind.tags",
+          "name": "Tags"
         }
       ]
     },
@@ -67,6 +75,43 @@
         "title": "New Session in Project",
         "category": "Sessfind",
         "icon": "$(add)"
+      },
+      {
+        "command": "sessfind.addTag",
+        "title": "Add Tag",
+        "category": "Sessfind",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "sessfind.removeTag",
+        "title": "Remove Tag",
+        "category": "Sessfind"
+      },
+      {
+        "command": "sessfind.createProject",
+        "title": "Create Project",
+        "category": "Sessfind",
+        "icon": "$(add)"
+      },
+      {
+        "command": "sessfind.deleteProject",
+        "title": "Delete Project",
+        "category": "Sessfind"
+      },
+      {
+        "command": "sessfind.addDirToProject",
+        "title": "Add Directory to Project",
+        "category": "Sessfind"
+      },
+      {
+        "command": "sessfind.pinSession",
+        "title": "Pin to Project",
+        "category": "Sessfind"
+      },
+      {
+        "command": "sessfind.unpinSession",
+        "title": "Unpin from Project",
+        "category": "Sessfind"
       }
     ],
     "menus": {
@@ -85,18 +130,63 @@
           "command": "sessfind.refresh",
           "when": "view == sessfind.autoProjects",
           "group": "navigation@2"
+        },
+        {
+          "command": "sessfind.createProject",
+          "when": "view == sessfind.userProjects",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sessfind.refresh",
+          "when": "view == sessfind.userProjects",
+          "group": "navigation@2"
+        },
+        {
+          "command": "sessfind.refresh",
+          "when": "view == sessfind.tags",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
         {
           "command": "sessfind.resumeSession",
-          "when": "view == sessfind.autoProjects && viewItem == session",
+          "when": "viewItem == session",
           "group": "inline@1"
         },
         {
           "command": "sessfind.newSessionHere",
-          "when": "view == sessfind.autoProjects && viewItem == session",
+          "when": "viewItem == session",
           "group": "1_run@1"
+        },
+        {
+          "command": "sessfind.addTag",
+          "when": "viewItem == session",
+          "group": "2_tags@1"
+        },
+        {
+          "command": "sessfind.removeTag",
+          "when": "viewItem == session",
+          "group": "2_tags@2"
+        },
+        {
+          "command": "sessfind.pinSession",
+          "when": "viewItem == session",
+          "group": "3_project@1"
+        },
+        {
+          "command": "sessfind.unpinSession",
+          "when": "viewItem == session",
+          "group": "3_project@2"
+        },
+        {
+          "command": "sessfind.addDirToProject",
+          "when": "viewItem == userProject",
+          "group": "1_edit@1"
+        },
+        {
+          "command": "sessfind.deleteProject",
+          "when": "viewItem == userProject",
+          "group": "9_danger@1"
         }
       ]
     },

@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { registerManageCommands } from "./commands/manage";
 import { runSearch } from "./commands/search";
 import { runCommandSpec } from "./commands/terminal";
 import {
@@ -13,15 +14,21 @@ import {
 import { SUPPORTED_JSON_API_VERSION, type Capabilities } from "./sessfind/types";
 import { AutoProjectsTreeProvider } from "./views/autoProjectsTree";
 import { SessionItem } from "./views/items";
+import { TagsTreeProvider } from "./views/tagsTree";
+import { UserProjectsTreeProvider } from "./views/userProjectsTree";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const client = new SessfindClient();
 
   const autoProjects = new AutoProjectsTreeProvider(client);
+  const userProjects = new UserProjectsTreeProvider(client);
+  const tags = new TagsTreeProvider(client);
   const previewProvider = new SessionDocumentProvider(client);
 
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider("sessfind.autoProjects", autoProjects),
+    vscode.window.registerTreeDataProvider("sessfind.userProjects", userProjects),
+    vscode.window.registerTreeDataProvider("sessfind.tags", tags),
     vscode.workspace.registerTextDocumentContentProvider(
       SESSION_SCHEME,
       previewProvider,
@@ -31,7 +38,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const refreshAll = () => {
     client.invalidate();
     autoProjects.refresh();
+    userProjects.refresh();
+    tags.refresh();
   };
+
+  context.subscriptions.push(...registerManageCommands(client, refreshAll));
 
   context.subscriptions.push(
     vscode.commands.registerCommand("sessfind.search", () => runSearch(client)),
