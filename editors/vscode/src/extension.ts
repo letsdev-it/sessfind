@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { runSearch } from "./commands/search";
 import { runCommandSpec } from "./commands/terminal";
 import {
   SESSION_SCHEME,
@@ -33,6 +34,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("sessfind.search", () => runSearch(client)),
+
     vscode.commands.registerCommand("sessfind.refresh", refreshAll),
 
     vscode.commands.registerCommand("sessfind.indexNow", async () => {
