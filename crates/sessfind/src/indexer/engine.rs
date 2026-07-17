@@ -503,6 +503,15 @@ impl IndexEngine {
         Ok(results)
     }
 
+    /// All indexed sessions, one entry per session, newest first.
+    pub fn list_sessions(&self) -> Result<Vec<SearchResult>> {
+        let chunks = self.list_all_chunks()?;
+        Ok(crate::search::results::dedup_by_session(
+            &chunks,
+            crate::search::results::SortOrder::TimeDesc,
+        ))
+    }
+
     /// Dump all chunks with full text (for semantic plugin).
     pub fn dump_all_chunks(&self) -> Result<Vec<sessfind_common::DumpChunk>> {
         let reader = self.index.reader()?;
