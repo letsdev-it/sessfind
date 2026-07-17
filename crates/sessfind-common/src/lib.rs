@@ -125,6 +125,81 @@ pub fn new_session_command(source: Source, dir: &str) -> CommandSpec {
     }
 }
 
+// ── JSON API types (consumed by the VS Code extension and future frontends) ──
+//
+// Evolution contract: changes to these types must be additive-only. Breaking
+// changes require bumping `Capabilities::json_api_version`.
+
+/// One indexed session, as listed by `sessfind sessions list --json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub session_id: String,
+    pub source: Source,
+    /// Absolute directory path the session ran in (drives grouping and resume cwd).
+    pub project: String,
+    pub title: Option<String>,
+    pub timestamp: DateTime<Utc>,
+    pub snippet: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    pub resume: CommandSpec,
+    pub new_session: CommandSpec,
+}
+
+/// A project derived automatically by grouping sessions on their directory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectGroup {
+    pub path: String,
+    /// Last path component, for display.
+    pub name: String,
+    pub session_count: usize,
+    pub last_activity: DateTime<Utc>,
+    pub sources: Vec<Source>,
+}
+
+/// A user-defined project: a root directory (where new sessions launch),
+/// optional extra directories, and manually pinned sessions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserProject {
+    pub name: String,
+    pub root_dir: String,
+    #[serde(default)]
+    pub dirs: Vec<String>,
+    #[serde(default)]
+    pub pinned_sessions: Vec<String>,
+    /// Reserved for LLM-generated project summaries.
+    pub description: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A tag with the number of sessions carrying it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagCount {
+    pub tag: String,
+    pub session_count: usize,
+}
+
+/// Which search methods this binary can serve right now.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchMethods {
+    pub fts: bool,
+    pub fuzzy: bool,
+    pub semantic: bool,
+    /// Names of detected LLM backends (empty = LLM search unavailable).
+    pub llm: Vec<String>,
+}
+
+/// Output of `sessfind capabilities` — lets clients gate features on what the
+/// installed binary supports.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Capabilities {
+    pub version: String,
+    pub json_api_version: u32,
+    pub features: Vec<String>,
+    pub search_methods: SearchMethods,
+    pub data_dir: String,
+}
+
 // ── DumpChunk (for dump-chunks JSONL exchange) ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -282,6 +357,59 @@ mod tests {
 
         let cmd = new_session_command(Source::Codex, "/proj");
         assert_eq!(cmd.args, vec!["codex"]);
+    }
+
+    #[test]
+    fn session_summary_serde_roundtrip() {
+        let summary = SessionSummary {
+            session_id: "abc".into(),
+            source: Source::ClaudeCode,
+            project: "/home/user/project".into(),
+            title: Some("Test".into()),
+            timestamp: Utc::now(),
+            snippet: "USER: hello".into(),
+            tags: vec!["work".into()],
+            resume: resume_command(Source::ClaudeCode, "abc", "/home/user/project"),
+            new_session: new_session_command(Source::ClaudeCode, "/home/user/project"),
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let back: SessionSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.session_id, "abc");
+        assert_eq!(back.tags, vec!["work"]);
+        assert_eq!(back.resume.args, vec!["claude", "--resume", "abc"]);
+    }
+
+    #[test]
+    fn session_summary_tags_default_to_empty() {
+        // Older producers may omit `tags` — clients must still parse.
+        let json = r#"{
+            "session_id": "abc", "source": "claude", "project": "/p",
+            "title": null, "timestamp": "2025-01-15T10:30:00Z", "snippet": "s",
+            "resume": {"args": ["claude"], "cwd": "/p"},
+            "new_session": {"args": ["claude"], "cwd": "/p"}
+        }"#;
+        let back: SessionSummary = serde_json::from_str(json).unwrap();
+        assert!(back.tags.is_empty());
+    }
+
+    #[test]
+    fn capabilities_serde_roundtrip() {
+        let caps = Capabilities {
+            version: "0.9.0".into(),
+            json_api_version: 1,
+            features: vec!["search-json".into()],
+            search_methods: SearchMethods {
+                fts: true,
+                fuzzy: true,
+                semantic: false,
+                llm: vec!["claude".into()],
+            },
+            data_dir: "/data".into(),
+        };
+        let json = serde_json::to_string(&caps).unwrap();
+        let back: Capabilities = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.json_api_version, 1);
+        assert_eq!(back.search_methods.llm, vec!["claude"]);
     }
 
     #[test]
