@@ -2,6 +2,7 @@ mod commands;
 mod config;
 mod indexer;
 mod llm;
+mod metadata;
 mod models;
 mod search;
 pub mod semantic;
@@ -104,6 +105,16 @@ enum Commands {
         #[command(subcommand)]
         action: ProjectsAction,
     },
+    /// Manage tags on sessions
+    Tag {
+        #[command(subcommand)]
+        action: TagAction,
+    },
+    /// Manage user-defined projects
+    Project {
+        #[command(subcommand)]
+        action: ProjectAction,
+    },
     /// Dump all indexed chunks as JSONL (for plugins)
     DumpChunks,
     /// Set LLM model override for a provider
@@ -137,6 +148,12 @@ enum SessionsAction {
         /// Filter by project name (substring match)
         #[arg(long, short = 'p')]
         project: Option<String>,
+        /// Filter by tag
+        #[arg(long, short = 't')]
+        tag: Option<String>,
+        /// Filter by membership in a user-defined project
+        #[arg(long)]
+        user_project: Option<String>,
         /// Max sessions (default: all)
         #[arg(long, short = 'n')]
         limit: Option<usize>,
@@ -157,6 +174,62 @@ enum ProjectsAction {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum TagAction {
+    /// Add one or more tags to a session
+    Add {
+        session_id: String,
+        #[arg(required = true)]
+        tags: Vec<String>,
+    },
+    /// Remove one or more tags from a session
+    Rm {
+        session_id: String,
+        #[arg(required = true)]
+        tags: Vec<String>,
+    },
+    /// List all tags with session counts
+    List {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProjectAction {
+    /// Create a user project with a root directory
+    Create {
+        name: String,
+        /// Root directory (new sessions launch here)
+        #[arg(long)]
+        root: String,
+    },
+    /// Delete a user project
+    Delete { name: String },
+    /// List user projects
+    List {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one user project
+    Show {
+        name: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Add an extra directory to a user project
+    AddDir { name: String, dir: String },
+    /// Remove an extra directory from a user project
+    RmDir { name: String, dir: String },
+    /// Pin a session to a user project
+    AddSession { name: String, session_id: String },
+    /// Unpin a session from a user project
+    RmSession { name: String, session_id: String },
 }
 
 #[derive(Subcommand)]
@@ -202,11 +275,16 @@ fn parse_date(s: &str) -> Result<chrono::DateTime<Utc>> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let data_dir = config::data_dir();
-    let engine = IndexEngine::open(&data_dir)?;
+
+    // The tantivy index is opened lazily: metadata-only commands (tag, project,
+    // capabilities, llm-model-*) never touch it, avoiding its lock and load cost.
+    let open_engine = || IndexEngine::open(&data_dir);
+    let open_metadata = || metadata::MetadataStore::open(&config::metadata_db_path());
 
     let command = match cli.command {
         Some(cmd) => cmd,
         None => {
+            let engine = open_engine()?;
             // Index before launching TUI if requested
             if cli.index {
                 let sources = get_sources("all");
@@ -227,6 +305,7 @@ fn main() -> Result<()> {
 
     match command {
         Commands::Index { source, force } => {
+            let engine = open_engine()?;
             let sources = get_sources(&source);
             for src in &sources {
                 eprint!("Indexing {}... ", src.name());
@@ -261,6 +340,7 @@ fn main() -> Result<()> {
             method,
             json,
         } => {
+            let engine = open_engine()?;
             let after_dt = after.as_deref().map(parse_date).transpose()?;
             let before_dt = before.as_deref().map(parse_date).transpose()?;
 
@@ -316,9 +396,11 @@ fn main() -> Result<()> {
             commands::print_search_results(&results, limit, json)?;
         }
         Commands::Show { session_id, json } => {
+            let engine = open_engine()?;
             commands::show(&engine, &session_id, json)?;
         }
         Commands::DumpChunks => {
+            let engine = open_engine()?;
             let chunks = engine.dump_all_chunks()?;
             for chunk in &chunks {
                 let json = serde_json::to_string(chunk)?;
@@ -326,6 +408,7 @@ fn main() -> Result<()> {
             }
         }
         Commands::Stats { json } => {
+            let engine = open_engine()?;
             commands::stats(&engine, json)?;
         }
         Commands::Capabilities => {
@@ -336,6 +419,8 @@ fn main() -> Result<()> {
                 SessionsAction::List {
                     source,
                     project,
+                    tag,
+                    user_project,
                     limit,
                     sort,
                     json,
@@ -346,11 +431,16 @@ fn main() -> Result<()> {
                 "score" => SortOrder::ScoreDesc,
                 other => anyhow::bail!("Invalid sort order: {other}. Expected time or score"),
             };
+            let engine = open_engine()?;
+            let store = open_metadata()?;
             commands::sessions_list(
                 &engine,
+                &store,
                 &commands::SessionListOpts {
                     source,
                     project,
+                    tag,
+                    user_project,
                     limit,
                     sort,
                     json,
@@ -360,7 +450,53 @@ fn main() -> Result<()> {
         Commands::Projects {
             action: ProjectsAction::List { json },
         } => {
+            let engine = open_engine()?;
             commands::projects_list(&engine, json)?;
+        }
+        Commands::Tag { action } => {
+            let store = open_metadata()?;
+            match action {
+                TagAction::Add { session_id, tags } => {
+                    let engine = open_engine()?;
+                    commands::tag_add(&engine, &store, &session_id, &tags)?;
+                }
+                TagAction::Rm { session_id, tags } => {
+                    commands::tag_rm(&store, &session_id, &tags)?;
+                }
+                TagAction::List { json } => {
+                    commands::tag_list(&store, json)?;
+                }
+            }
+        }
+        Commands::Project { action } => {
+            let store = open_metadata()?;
+            match action {
+                ProjectAction::Create { name, root } => {
+                    commands::project_create(&store, &name, &root)?;
+                }
+                ProjectAction::Delete { name } => {
+                    commands::project_delete(&store, &name)?;
+                }
+                ProjectAction::List { json } => {
+                    commands::project_list(&store, json)?;
+                }
+                ProjectAction::Show { name, json } => {
+                    commands::project_show(&store, &name, json)?;
+                }
+                ProjectAction::AddDir { name, dir } => {
+                    commands::project_add_dir(&store, &name, &dir)?;
+                }
+                ProjectAction::RmDir { name, dir } => {
+                    commands::project_rm_dir(&store, &name, &dir)?;
+                }
+                ProjectAction::AddSession { name, session_id } => {
+                    let engine = open_engine()?;
+                    commands::project_add_session(&engine, &store, &name, &session_id)?;
+                }
+                ProjectAction::RmSession { name, session_id } => {
+                    commands::project_rm_session(&store, &name, &session_id)?;
+                }
+            }
         }
         Commands::LlmModelSet { provider, model } => {
             let valid = ["claude", "opencode", "copilot", "cursor", "codex"];

@@ -7,6 +7,11 @@ pub use sessfind_common::CHUNK_MAX_CHARS;
 pub use sessfind_common::CHUNK_MIN_CHARS;
 pub use sessfind_common::data_dir;
 
+/// Path to the user-metadata DB (tags, user projects): <data_dir>/metadata.db
+pub fn metadata_db_path() -> PathBuf {
+    data_dir().join("metadata.db")
+}
+
 /// Path to config file: ~/.config/sessfind/config.json
 pub fn config_path() -> PathBuf {
     dirs::config_dir()

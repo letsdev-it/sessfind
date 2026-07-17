@@ -9,6 +9,7 @@ use sessfind_common::{
 };
 
 use crate::indexer::engine::IndexEngine;
+use crate::metadata::MetadataStore;
 use crate::models::{SearchResult, Source};
 use crate::search::results::{SortOrder, apply_sort};
 use crate::{config, llm, semantic};
@@ -22,6 +23,8 @@ const FEATURES: &[&str] = &[
     "sessions-list",
     "projects-auto",
     "resume-spec",
+    "tags",
+    "user-projects",
 ];
 
 pub fn session_summary(r: &SearchResult) -> SessionSummary {
@@ -58,12 +61,18 @@ pub fn capabilities() -> Result<()> {
 pub struct SessionListOpts {
     pub source: Option<String>,
     pub project: Option<String>,
+    pub tag: Option<String>,
+    pub user_project: Option<String>,
     pub limit: Option<usize>,
     pub sort: SortOrder,
     pub json: bool,
 }
 
-pub fn sessions_list(engine: &IndexEngine, opts: &SessionListOpts) -> Result<()> {
+pub fn sessions_list(
+    engine: &IndexEngine,
+    store: &MetadataStore,
+    opts: &SessionListOpts,
+) -> Result<()> {
     let mut sessions = engine.list_sessions()?;
     if let Some(src) = &opts.source {
         sessions.retain(|r| r.source.as_str() == src);
@@ -72,12 +81,40 @@ pub fn sessions_list(engine: &IndexEngine, opts: &SessionListOpts) -> Result<()>
         let needle = proj.to_lowercase();
         sessions.retain(|r| r.project.to_lowercase().contains(&needle));
     }
+    if let Some(tag) = &opts.tag {
+        let ids: std::collections::HashSet<String> =
+            store.sessions_with_tag(tag)?.into_iter().collect();
+        sessions.retain(|r| ids.contains(&r.session_id));
+    }
+    if let Some(name) = &opts.user_project {
+        let project = store
+            .get_project(name)?
+            .ok_or_else(|| anyhow::anyhow!("No user project named '{name}'"))?;
+        let dirs: std::collections::HashSet<&str> = std::iter::once(project.root_dir.as_str())
+            .chain(project.dirs.iter().map(|d| d.as_str()))
+            .collect();
+        let pinned: std::collections::HashSet<&str> =
+            project.pinned_sessions.iter().map(|s| s.as_str()).collect();
+        sessions.retain(|r| {
+            dirs.contains(r.project.as_str()) || pinned.contains(r.session_id.as_str())
+        });
+    }
     apply_sort(&mut sessions, opts.sort);
     if let Some(limit) = opts.limit {
         sessions.truncate(limit);
     }
 
-    let summaries: Vec<SessionSummary> = sessions.iter().map(session_summary).collect();
+    // Decorate with tags in one batch query.
+    let ids: Vec<String> = sessions.iter().map(|r| r.session_id.clone()).collect();
+    let mut tags_by_session = store.tags_for_sessions(&ids)?;
+    let summaries: Vec<SessionSummary> = sessions
+        .iter()
+        .map(|r| {
+            let mut summary = session_summary(r);
+            summary.tags = tags_by_session.remove(&r.session_id).unwrap_or_default();
+            summary
+        })
+        .collect();
     if opts.json {
         println!("{}", serde_json::to_string(&summaries)?);
         return Ok(());
@@ -89,14 +126,17 @@ pub fn sessions_list(engine: &IndexEngine, opts: &SessionListOpts) -> Result<()>
     );
     println!("\x1b[90m{}\x1b[0m", "-".repeat(120));
     for s in &summaries {
-        let text = s.title.clone().unwrap_or_else(|| s.snippet.clone());
+        let mut text = s.title.clone().unwrap_or_else(|| s.snippet.clone());
+        if !s.tags.is_empty() {
+            text = format!("[{}] {text}", s.tags.join(", "));
+        }
         println!(
             "{} \x1b[90m{:<12}\x1b[0m {:<30} \x1b[90m{:<38}\x1b[0m {}",
             colored_source(s.source),
             s.timestamp.format("%Y-%m-%d"),
             truncate_project(&s.project, 28),
             truncate_str(&s.session_id, 36),
-            truncate_str(&text.replace('\n', " "), 50)
+            truncate_str(&text.replace('\n', " "), 60)
         );
     }
     Ok(())
@@ -352,6 +392,171 @@ pub fn stats(engine: &IndexEngine, json: bool) -> Result<()> {
         "\x1b[90mIndex location: {}\x1b[0m",
         config::data_dir().display()
     );
+    Ok(())
+}
+
+// ── Tags ──
+
+/// Guard against tagging a session that isn't indexed (would orphan the row).
+fn ensure_session_exists(engine: &IndexEngine, session_id: &str) -> Result<()> {
+    if engine.get_session_chunks(session_id)?.is_empty() {
+        anyhow::bail!("No indexed session with ID: {session_id}");
+    }
+    Ok(())
+}
+
+pub fn tag_add(
+    engine: &IndexEngine,
+    store: &MetadataStore,
+    session_id: &str,
+    tags: &[String],
+) -> Result<()> {
+    ensure_session_exists(engine, session_id)?;
+    for tag in tags {
+        store.add_tag(session_id, tag)?;
+    }
+    println!("Tagged {session_id} with: {}", tags.join(", "));
+    Ok(())
+}
+
+pub fn tag_rm(store: &MetadataStore, session_id: &str, tags: &[String]) -> Result<()> {
+    let mut removed = Vec::new();
+    for tag in tags {
+        if store.remove_tag(session_id, tag)? {
+            removed.push(tag.clone());
+        }
+    }
+    if removed.is_empty() {
+        println!("No matching tags on {session_id}");
+    } else {
+        println!("Removed from {session_id}: {}", removed.join(", "));
+    }
+    Ok(())
+}
+
+pub fn tag_list(store: &MetadataStore, json: bool) -> Result<()> {
+    let tags = store.list_tags()?;
+    if json {
+        println!("{}", serde_json::to_string(&tags)?);
+        return Ok(());
+    }
+    if tags.is_empty() {
+        println!("No tags yet.");
+        return Ok(());
+    }
+    println!("\x1b[1m{:<24} Sessions\x1b[0m", "Tag");
+    println!("\x1b[90m{}\x1b[0m", "-".repeat(40));
+    for t in &tags {
+        println!("{:<24} {}", t.tag, t.session_count);
+    }
+    Ok(())
+}
+
+// ── User projects ──
+
+pub fn project_create(store: &MetadataStore, name: &str, root: &str) -> Result<()> {
+    store.create_project(name, root)?;
+    println!("Created project '{name}' rooted at {root}");
+    Ok(())
+}
+
+pub fn project_delete(store: &MetadataStore, name: &str) -> Result<()> {
+    if store.delete_project(name)? {
+        println!("Deleted project '{name}'");
+    } else {
+        println!("No project named '{name}'");
+    }
+    Ok(())
+}
+
+pub fn project_list(store: &MetadataStore, json: bool) -> Result<()> {
+    let projects = store.list_projects()?;
+    if json {
+        println!("{}", serde_json::to_string(&projects)?);
+        return Ok(());
+    }
+    if projects.is_empty() {
+        println!("No user projects yet.");
+        return Ok(());
+    }
+    println!(
+        "\x1b[1m{:<24} {:>5} {:>7} Root\x1b[0m",
+        "Project", "Dirs", "Pinned"
+    );
+    println!("\x1b[90m{}\x1b[0m", "-".repeat(80));
+    for p in &projects {
+        println!(
+            "{:<24} {:>5} {:>7} \x1b[90m{}\x1b[0m",
+            truncate_str(&p.name, 22),
+            p.dirs.len(),
+            p.pinned_sessions.len(),
+            p.root_dir
+        );
+    }
+    Ok(())
+}
+
+pub fn project_show(store: &MetadataStore, name: &str, json: bool) -> Result<()> {
+    let project = store
+        .get_project(name)?
+        .ok_or_else(|| anyhow::anyhow!("No project named '{name}'"))?;
+    if json {
+        println!("{}", serde_json::to_string(&project)?);
+        return Ok(());
+    }
+    println!("\x1b[1mProject:\x1b[0m {}", project.name);
+    println!("\x1b[1mRoot:\x1b[0m    {}", project.root_dir);
+    if let Some(desc) = &project.description {
+        println!("\x1b[1mAbout:\x1b[0m   {desc}");
+    }
+    if !project.dirs.is_empty() {
+        println!("\x1b[1mDirs:\x1b[0m");
+        for d in &project.dirs {
+            println!("  {d}");
+        }
+    }
+    if !project.pinned_sessions.is_empty() {
+        println!("\x1b[1mPinned sessions:\x1b[0m");
+        for s in &project.pinned_sessions {
+            println!("  {s}");
+        }
+    }
+    Ok(())
+}
+
+pub fn project_add_dir(store: &MetadataStore, name: &str, dir: &str) -> Result<()> {
+    store.add_dir(name, dir)?;
+    println!("Added {dir} to '{name}'");
+    Ok(())
+}
+
+pub fn project_rm_dir(store: &MetadataStore, name: &str, dir: &str) -> Result<()> {
+    if store.remove_dir(name, dir)? {
+        println!("Removed {dir} from '{name}'");
+    } else {
+        println!("{dir} was not a directory of '{name}'");
+    }
+    Ok(())
+}
+
+pub fn project_add_session(
+    engine: &IndexEngine,
+    store: &MetadataStore,
+    name: &str,
+    session_id: &str,
+) -> Result<()> {
+    ensure_session_exists(engine, session_id)?;
+    store.pin_session(name, session_id)?;
+    println!("Pinned {session_id} to '{name}'");
+    Ok(())
+}
+
+pub fn project_rm_session(store: &MetadataStore, name: &str, session_id: &str) -> Result<()> {
+    if store.unpin_session(name, session_id)? {
+        println!("Unpinned {session_id} from '{name}'");
+    } else {
+        println!("{session_id} was not pinned to '{name}'");
+    }
     Ok(())
 }
 
