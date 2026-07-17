@@ -16,7 +16,7 @@ use ratatui::backend::CrosstermBackend;
 
 use crate::indexer::engine::IndexEngine;
 
-pub use app::ResumeCommand;
+pub use sessfind_common::CommandSpec as ResumeCommand;
 
 pub fn run(engine: &IndexEngine, initial_mode: Option<&str>) -> Result<Option<ResumeCommand>> {
     // Setup terminal

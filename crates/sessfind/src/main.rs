@@ -15,6 +15,7 @@ use chrono::{NaiveDate, TimeZone, Utc};
 use clap::{Parser, Subcommand};
 
 use crate::indexer::engine::{IndexEngine, SearchParams};
+use crate::search::results::{SortOrder, dedup_by_session};
 use crate::sources::SessionSource;
 use crate::sources::claude_code::ClaudeCodeSource;
 use crate::sources::codex::CodexSource;
@@ -232,55 +233,18 @@ fn main() -> Result<()> {
                 let backend = &backends[0];
                 eprintln!("Searching with LLM ({})...", backend.display());
 
-                // Ask LLM to generate FTS queries from user intent
-                let prompt = llm::build_query_gen_prompt(&query);
-                let response = llm::invoke(backend, &prompt)?;
-                let queries = llm::parse_query_gen_response(&response);
-
-                let queries = if queries.is_empty() {
-                    eprintln!("LLM returned no queries, falling back to original query.");
-                    vec![query.clone()]
-                } else {
-                    eprintln!("LLM generated {} queries", queries.len());
-                    queries
+                let base = SearchParams {
+                    query: String::new(),
+                    limit: 30,
+                    source: source.clone(),
+                    project: project.clone(),
+                    after: after_dt,
+                    before: before_dt,
                 };
+                let expanded = llm::expanded_search(&engine, backend, &query, &base)?;
+                eprintln!("LLM generated {} queries", expanded.queries.len());
 
-                // Run each generated query and merge results
-                let mut all_results = Vec::new();
-                for q in &queries {
-                    let qparams = SearchParams {
-                        query: q.clone(),
-                        limit: 30,
-                        source: source.clone(),
-                        project: project.clone(),
-                        after: after_dt,
-                        before: before_dt,
-                    };
-                    if let Ok(results) = engine.search(&qparams) {
-                        all_results.extend(results);
-                    }
-                }
-
-                // Dedup by session, keep highest score, sort descending
-                let mut best: std::collections::HashMap<String, models::SearchResult> =
-                    std::collections::HashMap::new();
-                for r in all_results {
-                    best.entry(r.session_id.clone())
-                        .and_modify(|existing| {
-                            if r.score > existing.score {
-                                *existing = r.clone();
-                            }
-                        })
-                        .or_insert(r);
-                }
-                let mut merged: Vec<_> = best.into_values().collect();
-                merged.sort_by(|a, b| {
-                    b.score
-                        .partial_cmp(&a.score)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                        .then_with(|| b.timestamp.cmp(&a.timestamp))
-                });
-                merged
+                dedup_by_session(&expanded.results, SortOrder::ScoreDesc)
             } else if method == "fuzzy" {
                 engine.search_fuzzy(&params)?
             } else {

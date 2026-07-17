@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use anyhow::Result;
 
 use crate::config::Config;
+use crate::indexer::engine::{IndexEngine, SearchParams};
+use crate::models::SearchResult;
 
 /// An LLM CLI backend that can be used for agentic search.
 #[derive(Debug, Clone)]
@@ -55,6 +57,44 @@ pub fn detect_backends() -> Vec<LlmBackend> {
     }
 
     backends
+}
+
+/// Outcome of an LLM query-expansion search: the FTS queries that were run
+/// (falls back to the original query when the LLM yields none) and the merged,
+/// un-deduplicated results of running each of them.
+pub struct ExpandedSearch {
+    pub queries: Vec<String>,
+    pub results: Vec<SearchResult>,
+}
+
+/// LLM search is query expansion over FTS: ask the backend to generate FTS
+/// queries for the user's intent, run each through the engine using the
+/// filters from `base` (`base.limit` applies per generated query), and merge.
+/// Callers dedup/sort the merged results with their own order.
+pub fn expanded_search(
+    engine: &IndexEngine,
+    backend: &LlmBackend,
+    user_query: &str,
+    base: &SearchParams,
+) -> Result<ExpandedSearch> {
+    let prompt = build_query_gen_prompt(user_query);
+    let response = invoke(backend, &prompt)?;
+    let mut queries = parse_query_gen_response(&response);
+    if queries.is_empty() {
+        queries = vec![user_query.to_string()];
+    }
+
+    let mut results = Vec::new();
+    for query in &queries {
+        let params = SearchParams {
+            query: query.clone(),
+            ..base.clone()
+        };
+        if let Ok(found) = engine.search(&params) {
+            results.extend(found);
+        }
+    }
+    Ok(ExpandedSearch { queries, results })
 }
 
 /// Build a prompt that asks the LLM to generate FTS queries for the user's intent.
