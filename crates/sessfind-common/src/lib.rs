@@ -110,6 +110,23 @@ pub fn resume_command(source: Source, session_id: &str, dir: &str) -> CommandSpe
     }
 }
 
+/// Build the command that opens an interactive session pre-loaded with a
+/// prompt ("chat about this project"). Returns None for tools that cannot
+/// take an initial prompt in interactive mode.
+pub fn chat_command(source: Source, dir: &str, prompt: &str) -> Option<CommandSpec> {
+    let args = match source {
+        Source::ClaudeCode => vec!["claude".into(), prompt.into()],
+        Source::Codex => vec!["codex".into(), prompt.into()],
+        Source::OpenCode => vec!["opencode".into(), "--prompt".into(), prompt.into()],
+        // Copilot's interactive mode takes no initial prompt; Cursor is an editor.
+        Source::Copilot | Source::Cursor => return None,
+    };
+    Some(CommandSpec {
+        args,
+        cwd: Some(dir.into()),
+    })
+}
+
 /// Build the command that starts a fresh session of the given tool in a directory.
 pub fn new_session_command(source: Source, dir: &str) -> CommandSpec {
     let args = match source {
@@ -162,6 +179,9 @@ pub struct ProjectGroup {
     /// Tags attached to the whole directory (inherited by its sessions).
     #[serde(default)]
     pub tags: Vec<String>,
+    /// LLM-generated project summary, when one has been produced.
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// An installed AI CLI tool, with a ready-to-run new-session command for a
@@ -170,6 +190,10 @@ pub struct ProjectGroup {
 pub struct ToolInfo {
     pub name: String,
     pub new_session: CommandSpec,
+    /// Whether the tool can start an interactive session with an initial
+    /// prompt (used for "chat about this project").
+    #[serde(default)]
+    pub chat_capable: bool,
 }
 
 /// A tag with the number of sessions carrying it.
@@ -395,10 +419,27 @@ mod tests {
     }
 
     #[test]
+    fn chat_command_per_source() {
+        let cmd = chat_command(Source::ClaudeCode, "/proj", "hello").unwrap();
+        assert_eq!(cmd.args, vec!["claude", "hello"]);
+        assert_eq!(cmd.cwd.as_deref(), Some("/proj"));
+
+        let cmd = chat_command(Source::OpenCode, "/proj", "hello").unwrap();
+        assert_eq!(cmd.args, vec!["opencode", "--prompt", "hello"]);
+
+        let cmd = chat_command(Source::Codex, "/proj", "hello").unwrap();
+        assert_eq!(cmd.args, vec!["codex", "hello"]);
+
+        assert!(chat_command(Source::Copilot, "/proj", "hello").is_none());
+        assert!(chat_command(Source::Cursor, "/proj", "hello").is_none());
+    }
+
+    #[test]
     fn tool_info_serde_roundtrip() {
         let tool = ToolInfo {
             name: "claude".into(),
             new_session: new_session_command(Source::ClaudeCode, "/proj"),
+            chat_capable: true,
         };
         let json = serde_json::to_string(&tool).unwrap();
         let back: ToolInfo = serde_json::from_str(&json).unwrap();

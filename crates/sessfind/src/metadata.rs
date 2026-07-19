@@ -40,7 +40,13 @@ impl MetadataStore {
                 created_at  TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (project_dir, tag)
             );
-            CREATE INDEX IF NOT EXISTS idx_project_tags_tag ON project_tags(tag);",
+            CREATE INDEX IF NOT EXISTS idx_project_tags_tag ON project_tags(tag);
+            CREATE TABLE IF NOT EXISTS project_descriptions (
+                project_dir  TEXT PRIMARY KEY,
+                description  TEXT NOT NULL,
+                tool         TEXT NOT NULL,
+                generated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );",
         )?;
         Ok(Self { conn })
     }
@@ -163,6 +169,38 @@ impl MetadataStore {
         for row in rows {
             let (sid, name) = row?;
             map.insert(sid, name);
+        }
+        Ok(map)
+    }
+
+    // ── Project (directory) descriptions (LLM summaries) ──
+
+    pub fn set_project_description(
+        &self,
+        project_dir: &str,
+        description: &str,
+        tool: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO project_descriptions (project_dir, description, tool)
+             VALUES (?1, ?2, ?3)",
+            (project_dir, description, tool),
+        )?;
+        Ok(())
+    }
+
+    /// All stored project descriptions, keyed by directory.
+    pub fn project_descriptions_map(&self) -> Result<HashMap<String, String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT project_dir, description FROM project_descriptions")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut map = HashMap::new();
+        for row in rows {
+            let (dir, desc) = row?;
+            map.insert(dir, desc);
         }
         Ok(map)
     }

@@ -180,6 +180,26 @@ enum ProjectsAction {
         #[arg(long)]
         json: bool,
     },
+    /// Generate an LLM summary of a project directory
+    Summarize {
+        dir: String,
+        /// LLM backend to use (claude, opencode, copilot); default: first detected
+        #[arg(long)]
+        tool: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Build the command that opens a chat about a project (context pre-loaded)
+    Chat {
+        dir: String,
+        /// Tool to chat with (claude, opencode, codex); default: first capable
+        #[arg(long)]
+        tool: Option<String>,
+        /// Output the command as JSON (CommandSpec)
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -452,13 +472,23 @@ fn main() -> Result<()> {
                 commands::session_rename(&engine, &store, &session_id, name.as_deref())?;
             }
         },
-        Commands::Projects {
-            action: ProjectsAction::List { json },
-        } => {
-            let engine = open_engine()?;
-            let store = open_metadata()?;
-            commands::projects_list(&engine, &store, json)?;
-        }
+        Commands::Projects { action } => match action {
+            ProjectsAction::List { json } => {
+                let engine = open_engine()?;
+                let store = open_metadata()?;
+                commands::projects_list(&engine, &store, json)?;
+            }
+            ProjectsAction::Summarize { dir, tool, json } => {
+                let engine = open_engine()?;
+                let store = open_metadata()?;
+                commands::projects_summarize(&engine, &store, &dir, tool.as_deref(), json)?;
+            }
+            ProjectsAction::Chat { dir, tool, json } => {
+                let engine = open_engine()?;
+                let store = open_metadata()?;
+                commands::projects_chat(&engine, &store, &dir, tool.as_deref(), json)?;
+            }
+        },
         Commands::Tools {
             action: ToolsAction::List { dir, json },
         } => {

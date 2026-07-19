@@ -227,6 +227,40 @@ fn tools_list_json_parses() {
     }
 }
 
+// ── Project chat & summaries ──
+
+#[test]
+fn projects_chat_unknown_dir_fails() {
+    sessfind()
+        .args(["projects", "chat", "/definitely/not/a/project/dir"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No indexed sessions"));
+}
+
+#[test]
+fn projects_chat_unsupported_tool_fails() {
+    sessfind()
+        .args([
+            "projects",
+            "chat",
+            "/definitely/not/a/project/dir",
+            "--tool",
+            "cursor",
+        ])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn projects_summarize_unknown_dir_fails() {
+    sessfind()
+        .args(["projects", "summarize", "/definitely/not/a/project/dir"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No indexed sessions"));
+}
+
 // ── Tags & user projects ──
 
 #[test]

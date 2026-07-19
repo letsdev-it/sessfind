@@ -5,8 +5,8 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use sessfind_common::{
-    Capabilities, ProjectGroup, SearchMethods, SessionSummary, ToolInfo, new_session_command,
-    resume_command,
+    Capabilities, ProjectGroup, SearchMethods, SessionSummary, ToolInfo, chat_command,
+    new_session_command, resume_command,
 };
 
 use crate::indexer::engine::IndexEngine;
@@ -28,6 +28,8 @@ const FEATURES: &[&str] = &[
     "tools-list",
     "session-rename",
     "project-tags",
+    "project-summaries",
+    "project-chat",
 ];
 
 pub fn session_summary(r: &SearchResult) -> SessionSummary {
@@ -158,6 +160,7 @@ pub fn sessions_list(
 pub fn projects_list(engine: &IndexEngine, store: &MetadataStore, json: bool) -> Result<()> {
     let sessions = engine.list_sessions()?;
     let project_tags = store.project_tags_map()?;
+    let descriptions = store.project_descriptions_map()?;
 
     let mut groups: HashMap<String, ProjectGroup> = HashMap::new();
     for s in &sessions {
@@ -170,6 +173,7 @@ pub fn projects_list(engine: &IndexEngine, store: &MetadataStore, json: bool) ->
                 last_activity: s.timestamp,
                 sources: Vec::new(),
                 tags: project_tags.get(&s.project).cloned().unwrap_or_default(),
+                description: descriptions.get(&s.project).cloned(),
             });
         group.session_count += 1;
         if s.timestamp > group.last_activity {
@@ -460,6 +464,7 @@ pub fn tools_list(dir: Option<&str>, json: bool) -> Result<()> {
         .map(|source| ToolInfo {
             name: source.as_str().to_string(),
             new_session: new_session_command(source, &dir),
+            chat_capable: chat_command(source, &dir, "").is_some(),
         })
         .collect();
 
@@ -475,6 +480,189 @@ pub fn tools_list(dir: Option<&str>, json: bool) -> Result<()> {
     println!("\x1b[90m{}\x1b[0m", "-".repeat(50));
     for t in &tools {
         println!("{:<12} {}", t.name, t.new_session.args.join(" "));
+    }
+    Ok(())
+}
+
+// ── Project summaries & chat ──
+
+/// Sessions in the given directory, newest first; errors when empty.
+fn project_sessions(engine: &IndexEngine, dir: &str) -> Result<Vec<SearchResult>> {
+    let mut sessions = engine.list_sessions()?;
+    sessions.retain(|s| s.project == dir);
+    if sessions.is_empty() {
+        anyhow::bail!("No indexed sessions in {dir}");
+    }
+    Ok(sessions)
+}
+
+/// Prompt asking an LLM to describe what the project is about, based on
+/// session titles and a sample of recent conversation content.
+fn build_summary_prompt(dir: &str, sessions: &[SearchResult], samples: &[String]) -> String {
+    let mut listing = String::new();
+    for s in sessions.iter().take(20) {
+        let title = s.title.as_deref().unwrap_or(&s.snippet);
+        listing.push_str(&format!(
+            "- {} — {}\n",
+            s.timestamp.format("%Y-%m-%d"),
+            title
+        ));
+    }
+    let mut sample_text = String::new();
+    for sample in samples {
+        sample_text.push_str(sample);
+        sample_text.push_str("\n---\n");
+    }
+    format!(
+        r#"You are summarizing a software project for a session-browser sidebar.
+Project directory: {dir}
+
+AI coding sessions recorded in this project (newest first):
+{listing}
+Excerpts from recent sessions:
+{sample_text}
+Write a 2-3 sentence description of what this project is and what has been
+worked on recently. Use the dominant language of the sessions. Return ONLY the
+description text, no headings, no markdown."#
+    )
+}
+
+pub fn projects_summarize(
+    engine: &IndexEngine,
+    store: &MetadataStore,
+    dir: &str,
+    tool: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    let sessions = project_sessions(engine, dir)?;
+
+    let backends = llm::detect_backends();
+    let backend = match tool {
+        Some(name) => backends
+            .iter()
+            .find(|b| b.name == name)
+            .ok_or_else(|| anyhow::anyhow!("LLM backend '{name}' not detected"))?,
+        None => backends.first().ok_or_else(|| {
+            anyhow::anyhow!("No LLM CLI tools detected (claude, opencode, copilot)")
+        })?,
+    };
+
+    // Sample the first chunk of the five most recent sessions, truncated.
+    let samples: Vec<String> = sessions
+        .iter()
+        .take(5)
+        .filter_map(|s| engine.get_session_chunks(&s.session_id).ok())
+        .filter_map(|chunks| chunks.first().map(|c| truncate_str(&c.snippet, 800)))
+        .collect();
+
+    eprintln!("Summarizing {dir} with {}…", backend.display());
+    let prompt = build_summary_prompt(dir, &sessions, &samples);
+    let description = llm::invoke(backend, &prompt)?.trim().to_string();
+    if description.is_empty() {
+        anyhow::bail!("LLM returned an empty summary");
+    }
+    store.set_project_description(dir, &description, &backend.name)?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "project_dir": dir,
+                "description": description,
+                "tool": backend.name,
+            })
+        );
+    } else {
+        println!("{description}");
+    }
+    Ok(())
+}
+
+/// Markdown brief injected as the opening prompt of a "chat about this
+/// project" session.
+fn build_project_brief(
+    dir: &str,
+    sessions: &[SearchResult],
+    tags: &[String],
+    description: Option<&str>,
+) -> String {
+    let mut brief = String::new();
+    brief.push_str(&format!(
+        "I'm starting a working session in the project at `{dir}`.\n\n"
+    ));
+    if let Some(desc) = description {
+        brief.push_str(&format!("About this project: {desc}\n\n"));
+    }
+    if !tags.is_empty() {
+        brief.push_str(&format!("Project tags: {}\n\n", tags.join(", ")));
+    }
+    brief.push_str("Recent AI coding sessions in this project:\n");
+    for s in sessions.iter().take(15) {
+        let title = s.title.as_deref().unwrap_or(&s.snippet);
+        brief.push_str(&format!(
+            "- {} [{}] {} (id: {})\n",
+            s.timestamp.format("%Y-%m-%d"),
+            s.source.as_str(),
+            title,
+            s.session_id
+        ));
+    }
+    brief.push_str(
+        "\nYou can inspect any past session with `sessfind show <id>` and search \
+         them with `sessfind search <query>`.\n\
+         Familiarize yourself with the project, then ask me what I want to work on.",
+    );
+    brief
+}
+
+pub fn projects_chat(
+    engine: &IndexEngine,
+    store: &MetadataStore,
+    dir: &str,
+    tool: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    let sessions = project_sessions(engine, dir)?;
+    let tags = store
+        .project_tags_map()?
+        .get(dir)
+        .cloned()
+        .unwrap_or_default();
+    let descriptions = store.project_descriptions_map()?;
+    let brief = build_project_brief(
+        dir,
+        &sessions,
+        &tags,
+        descriptions.get(dir).map(|s| s.as_str()),
+    );
+
+    let chat_tools: Vec<Source> = installed_tools()
+        .into_iter()
+        .filter(|s| chat_command(*s, dir, "").is_some())
+        .collect();
+    let source = match tool {
+        Some(name) => {
+            let source = Source::parse_source(name)
+                .ok_or_else(|| anyhow::anyhow!("Unknown tool: {name}"))?;
+            if !chat_tools.contains(&source) {
+                let names: Vec<&str> = chat_tools.iter().map(|s| s.as_str()).collect();
+                anyhow::bail!(
+                    "'{name}' cannot open a chat with an initial prompt. Available: {}",
+                    names.join(", ")
+                );
+            }
+            source
+        }
+        None => *chat_tools
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("No chat-capable AI CLI tools found on PATH"))?,
+    };
+
+    let spec = chat_command(source, dir, &brief).expect("source filtered to chat-capable above");
+    if json {
+        println!("{}", serde_json::to_string(&spec)?);
+    } else {
+        println!("{}", spec.args.join(" "));
     }
     Ok(())
 }
