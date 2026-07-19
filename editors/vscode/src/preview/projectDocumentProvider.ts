@@ -1,6 +1,5 @@
 import * as vscode from "vscode";
 import type { SessfindClient } from "../sessfind/client";
-import { belongsTo } from "../views/membership";
 import { lastSegment } from "../views/grouping";
 import { renderProject } from "./renderProject";
 
@@ -8,9 +7,9 @@ export const PROJECT_SCHEME = "sessfind-project";
 
 /**
  * Renders a project overview (metadata + metrics) as a read-only Markdown
- * document. URIs: `sessfind-project:/auto/<base64url(path)>.md` for
- * auto-projects and `sessfind-project:/user/<encoded name>.md` for user
- * projects.
+ * document. URIs: `sessfind-project:/<name>.md?<base64url(path)>` — the path
+ * carries the display name for the tab title, the query carries the encoded
+ * directory.
  */
 export class ProjectDocumentProvider
   implements vscode.TextDocumentContentProvider
@@ -19,25 +18,17 @@ export class ProjectDocumentProvider
 
   static uriForAuto(path: string): vscode.Uri {
     const encoded = Buffer.from(path, "utf8").toString("base64url");
-    return vscode.Uri.parse(`${PROJECT_SCHEME}:/auto/${encoded}.md`);
-  }
-
-  static uriForUser(name: string): vscode.Uri {
-    return vscode.Uri.parse(
-      `${PROJECT_SCHEME}:/user/${encodeURIComponent(name)}.md`,
-    );
+    return vscode.Uri.from({
+      scheme: PROJECT_SCHEME,
+      path: `/${lastSegment(path)}.md`,
+      query: encoded,
+    });
   }
 
   async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
-    const match = uri.path.match(/^\/(auto|user)\/(.+)\.md$/);
-    if (!match) {
-      return "# Unknown project";
-    }
-    const [, kind, encoded] = match;
     try {
-      return kind === "auto"
-        ? await this.renderAuto(Buffer.from(encoded, "base64url").toString("utf8"))
-        : await this.renderUser(decodeURIComponent(encoded));
+      const path = Buffer.from(uri.query, "base64url").toString("utf8");
+      return await this.renderAuto(path);
     } catch (err) {
       return `# Project unavailable\n\n\`\`\`\n${String(err)}\n\`\`\`\n`;
     }
@@ -45,6 +36,8 @@ export class ProjectDocumentProvider
 
   private async renderAuto(path: string): Promise<string> {
     const sessions = await this.client.sessions();
+    const projects = await this.client.projects();
+    const group = projects.find((p) => p.path === path);
     return renderProject({
       title: lastSegment(path),
       kind: "auto",
@@ -52,25 +45,8 @@ export class ProjectDocumentProvider
       dirs: [],
       pinnedSessions: [],
       description: null,
+      tags: group?.tags ?? [],
       sessions: sessions.filter((s) => s.project === path),
-    });
-  }
-
-  private async renderUser(name: string): Promise<string> {
-    const projects = await this.client.userProjects();
-    const project = projects.find((p) => p.name === name);
-    if (!project) {
-      return `# ${name}\n\nProject not found.`;
-    }
-    const sessions = await this.client.sessions();
-    return renderProject({
-      title: project.name,
-      kind: "user",
-      rootDir: project.root_dir,
-      dirs: project.dirs,
-      pinnedSessions: project.pinned_sessions,
-      description: project.description,
-      sessions: sessions.filter((s) => belongsTo(s, project)),
     });
   }
 }

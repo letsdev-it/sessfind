@@ -117,7 +117,7 @@ export class SearchBoxViewProvider implements vscode.WebviewViewProvider {
     display: flex;
     align-items: center;
     gap: 4px;
-    margin: 0 8px 4px;
+    margin: 0 8px;
   }
   .chip {
     border: none;
@@ -133,7 +133,9 @@ export class SearchBoxViewProvider implements vscode.WebviewViewProvider {
     color: var(--vscode-button-foreground);
   }
   .status {
-    margin-left: auto;
+    display: block;
+    min-height: 14px;
+    margin: 2px 8px 4px;
     font-size: 11px;
     color: var(--vscode-descriptionForeground);
     white-space: nowrap;
@@ -146,12 +148,14 @@ export class SearchBoxViewProvider implements vscode.WebviewViewProvider {
     <button class="clear" id="clear" title="Clear">✕</button>
   </div>
   <div class="modes" id="modes"></div>
+  <span class="status" id="status"></span>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const input = document.getElementById("q");
     const wrap = document.getElementById("wrap");
     const clear = document.getElementById("clear");
     const modesEl = document.getElementById("modes");
+    const statusEl = document.getElementById("status");
 
     const LABELS = { fts: "FTS", fuzzy: "Fuzzy", semantic: "Semantic", llm: "LLM" };
     const INSTANT = new Set(["fts", "fuzzy"]);
@@ -193,10 +197,7 @@ export class SearchBoxViewProvider implements vscode.WebviewViewProvider {
         });
         modesEl.appendChild(b);
       }
-      const s = document.createElement("span");
-      s.className = "status";
-      s.textContent = status();
-      modesEl.appendChild(s);
+      statusEl.textContent = status();
     }
 
     input.addEventListener("input", () => {

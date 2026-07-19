@@ -22,16 +22,15 @@ import {
   type SearchMethod,
 } from "./sessfind/types";
 import type { SessionFilter } from "./state/filter";
-import { AutoProjectsTreeProvider } from "./views/autoProjectsTree";
 import {
-  ProjectDirItem,
-  ProjectGroupItem,
-  SessionItem,
-  UserProjectItem,
-} from "./views/items";
+  AutoProjectsTreeProvider,
+  type ProjectsViewMode,
+} from "./views/autoProjectsTree";
+import { ProjectGroupItem, SessionItem } from "./views/items";
 import { SearchBoxViewProvider } from "./views/searchBoxView";
 import { TagsTreeProvider } from "./views/tagsTree";
-import { UserProjectsTreeProvider } from "./views/userProjectsTree";
+
+const VIEW_MODE_KEY = "sessfind.projectsViewMode";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const client = new SessfindClient();
@@ -39,8 +38,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   let activeFilter: SessionFilter | undefined;
   const getFilter = () => activeFilter;
 
-  const autoProjects = new AutoProjectsTreeProvider(client, getFilter);
-  const userProjects = new UserProjectsTreeProvider(client, getFilter);
+  let viewMode: ProjectsViewMode =
+    context.globalState.get<ProjectsViewMode>(VIEW_MODE_KEY) ?? "list";
+
+  const autoProjects = new AutoProjectsTreeProvider(
+    client,
+    getFilter,
+    () => viewMode,
+  );
   const tags = new TagsTreeProvider(client, getFilter);
   const previewProvider = new SessionDocumentProvider(client);
   const projectPreviewProvider = new ProjectDocumentProvider(client);
@@ -48,16 +53,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const autoView = vscode.window.createTreeView("sessfind.autoProjects", {
     treeDataProvider: autoProjects,
   });
-  const userView = vscode.window.createTreeView("sessfind.userProjects", {
-    treeDataProvider: userProjects,
-  });
   const tagsView = vscode.window.createTreeView("sessfind.tags", {
     treeDataProvider: tags,
   });
 
   context.subscriptions.push(
     autoView,
-    userView,
     tagsView,
     vscode.workspace.registerTextDocumentContentProvider(
       SESSION_SCHEME,
@@ -72,7 +73,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const refreshAll = () => {
     client.invalidate();
     autoProjects.refresh();
-    userProjects.refresh();
     tags.refresh();
   };
 
@@ -80,7 +80,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     activeFilter = filter;
     const badge = filter ? `filter: “${filter.query}”` : undefined;
     autoView.description = badge;
-    userView.description = badge;
     tagsView.description = badge;
     await vscode.commands.executeCommand(
       "setContext",
@@ -88,9 +87,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       filter !== undefined,
     );
     autoProjects.refresh();
-    userProjects.refresh();
     tags.refresh();
   };
+
+  const setViewMode = async (mode: ProjectsViewMode) => {
+    viewMode = mode;
+    await context.globalState.update(VIEW_MODE_KEY, mode);
+    await vscode.commands.executeCommand(
+      "setContext",
+      "sessfind.projectsTreeMode",
+      mode === "tree",
+    );
+    autoProjects.refresh();
+  };
+  await vscode.commands.executeCommand(
+    "setContext",
+    "sessfind.projectsTreeMode",
+    viewMode === "tree",
+  );
 
   // Queries from the search box. Instant methods (fts/fuzzy): filter by
   // substrings immediately, then refine with engine full-content matches.
@@ -156,6 +170,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await applyQuery("");
     }),
 
+    vscode.commands.registerCommand("sessfind.projectsAsTree", () =>
+      setViewMode("tree"),
+    ),
+    vscode.commands.registerCommand("sessfind.projectsAsList", () =>
+      setViewMode("list"),
+    ),
+
     vscode.commands.registerCommand("sessfind.indexNow", async () => {
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: "sessfind: indexing…" },
@@ -173,25 +194,27 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     vscode.commands.registerCommand(
       "sessfind.openSession",
-      async (sessionId?: string) => {
-        const id = sessionId ?? (await pickSessionId(client));
-        if (!id) {
-          return;
+      async (sessionId?: string, title?: string | null) => {
+        if (!sessionId) {
+          const picked = await pickSession(client);
+          if (!picked) {
+            return;
+          }
+          sessionId = picked.id;
+          title = picked.title;
         }
-        await openMarkdownPreview(SessionDocumentProvider.uriFor(id));
+        await openMarkdownPreview(
+          SessionDocumentProvider.uriFor(sessionId, title),
+        );
       },
     ),
 
     vscode.commands.registerCommand(
       "sessfind.openProjectDetails",
-      async (item?: ProjectGroupItem | UserProjectItem) => {
+      async (item?: ProjectGroupItem) => {
         if (item instanceof ProjectGroupItem) {
           await openMarkdownPreview(
             ProjectDocumentProvider.uriForAuto(item.group.path),
-          );
-        } else if (item instanceof UserProjectItem) {
-          await openMarkdownPreview(
-            ProjectDocumentProvider.uriForUser(item.project.name),
           );
         }
       },
@@ -232,33 +255,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     vscode.commands.registerCommand(
       "sessfind.newSessionInProject",
-      async (item?: ProjectGroupItem | UserProjectItem) => {
-        const dir =
-          item instanceof ProjectGroupItem
-            ? item.group.path
-            : item instanceof UserProjectItem
-              ? item.project.root_dir
-              : undefined;
-        if (!dir) {
+      async (item?: ProjectGroupItem) => {
+        if (!(item instanceof ProjectGroupItem)) {
           return;
         }
         try {
-          await startNewSession(client, dir);
-        } catch (err) {
-          reportError(err);
-        }
-      },
-    ),
-
-    vscode.commands.registerCommand(
-      "sessfind.removeDirFromProject",
-      async (item?: ProjectDirItem) => {
-        if (!item || item.isRoot) {
-          return;
-        }
-        try {
-          await client.projectRemoveDir(item.projectName, item.dir);
-          refreshAll();
+          await startNewSession(client, item.group.path);
         } catch (err) {
           reportError(err);
         }
@@ -323,7 +325,7 @@ async function checkCompatibility(
     );
   }
 
-  // Expose feature flags for menu `when` clauses (used by later PRs).
+  // Expose feature flags for menu `when` clauses.
   await vscode.commands.executeCommand(
     "setContext",
     "sessfind.features",
@@ -333,19 +335,20 @@ async function checkCompatibility(
   return caps;
 }
 
-async function pickSessionId(
+async function pickSession(
   client: SessfindClient,
-): Promise<string | undefined> {
+): Promise<{ id: string; title: string | null } | undefined> {
   const sessions = await client.sessions();
   const pick = await vscode.window.showQuickPick(
     sessions.map((s) => ({
       label: s.title ?? s.session_id,
       description: `${s.source} · ${s.project}`,
-      sessionId: s.session_id,
+      id: s.session_id,
+      title: s.title,
     })),
     { placeHolder: "Select a session to open" },
   );
-  return pick?.sessionId;
+  return pick ? { id: pick.id, title: pick.title } : undefined;
 }
 
 function reportError(err: unknown): void {

@@ -16,9 +16,13 @@ export interface SessionSummary {
   session_id: string;
   source: Source;
   project: string;
+  /** Display title: the user's custom name when set, else the tool's title. */
   title: string | null;
+  /** User-assigned name override, when one exists. */
+  custom_name?: string | null;
   timestamp: string;
   snippet: string;
+  /** Effective tags: direct plus inherited from the project directory. */
   tags: string[];
   resume: CommandSpec;
   new_session: CommandSpec;
@@ -30,6 +34,8 @@ export interface ProjectGroup {
   session_count: number;
   last_activity: string;
   sources: Source[];
+  /** Tags attached to the whole directory. */
+  tags?: string[];
 }
 
 export interface UserProject {

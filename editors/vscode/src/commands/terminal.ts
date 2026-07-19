@@ -36,7 +36,47 @@ export async function runCommandSpec(
 
   const terminal = vscode.window.createTerminal({ name: terminalName, cwd });
   terminal.show();
-  terminal.sendText(quoteCommand(spec.args));
+  sendWhenShellReady(terminal, quoteCommand(spec.args));
+}
+
+/**
+ * Run a command line once the shell is actually ready. Plain `sendText` types
+ * into whatever currently owns the terminal — e.g. an oh-my-zsh "update?
+ * [Y/n]" prompt during rc-file startup would swallow the first characters.
+ * Shell integration fires only after the prompt appears, so prefer it, with a
+ * sendText fallback for shells where integration never activates.
+ */
+function sendWhenShellReady(
+  terminal: vscode.Terminal,
+  commandLine: string,
+): void {
+  const FALLBACK_MS = 4000;
+  let done = false;
+
+  const run = () => {
+    if (done) {
+      return;
+    }
+    done = true;
+    listener.dispose();
+    clearTimeout(timer);
+    if (terminal.shellIntegration) {
+      terminal.shellIntegration.executeCommand(commandLine);
+    } else {
+      terminal.sendText(commandLine);
+    }
+  };
+
+  const listener = vscode.window.onDidChangeTerminalShellIntegration((e) => {
+    if (e.terminal === terminal) {
+      run();
+    }
+  });
+  const timer = setTimeout(run, FALLBACK_MS);
+
+  if (terminal.shellIntegration) {
+    run();
+  }
 }
 
 async function directoryExists(path: string): Promise<boolean> {

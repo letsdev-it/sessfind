@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { ProjectGroup, SessionSummary, UserProject } from "../sessfind/types";
+import type { ProjectGroup, SessionSummary } from "../sessfind/types";
 import { SessionDocumentProvider } from "../preview/sessionDocumentProvider";
 
 /** Tree node for one indexed session. `contextValue` drives context menus. */
@@ -13,35 +13,48 @@ export class SessionItem extends vscode.TreeItem {
     this.description = `${session.source} · ${formatDate(session.timestamp)}`;
     this.tooltip = buildTooltip(session);
     this.contextValue = "session";
-    this.iconPath = new vscode.ThemeIcon("comment-discussion");
+    this.iconPath = new vscode.ThemeIcon(
+      session.custom_name ? "comment-draft" : "comment-discussion",
+    );
     this.command = {
       command: "sessfind.openSession",
       title: "Open Session",
-      arguments: [session.session_id],
+      arguments: [session.session_id, session.title],
     };
-    this.resourceUri = SessionDocumentProvider.uriFor(session.session_id);
+    this.resourceUri = SessionDocumentProvider.uriFor(
+      session.session_id,
+      session.title,
+    );
   }
 }
 
 export class ProjectGroupItem extends vscode.TreeItem {
-  constructor(readonly group: ProjectGroup) {
-    super(group.name, vscode.TreeItemCollapsibleState.Collapsed);
+  constructor(
+    readonly group: ProjectGroup,
+    labelOverride?: string,
+  ) {
+    super(labelOverride ?? group.name, vscode.TreeItemCollapsibleState.Collapsed);
     this.id = `project:${group.path}`;
-    this.description = `${group.session_count} · ${group.sources.join(", ")}`;
-    this.tooltip = group.path;
+    const tags = group.tags ?? [];
+    const tagPart = tags.length > 0 ? ` · [${tags.join(", ")}]` : "";
+    this.description = `${group.session_count} · ${group.sources.join(", ")}${tagPart}`;
+    this.tooltip = buildProjectTooltip(group);
     this.contextValue = "autoProject";
     this.iconPath = new vscode.ThemeIcon("folder");
   }
 }
 
-export class UserProjectItem extends vscode.TreeItem {
-  constructor(readonly project: UserProject) {
-    super(project.name, vscode.TreeItemCollapsibleState.Collapsed);
-    this.id = `userProject:${project.name}`;
-    this.description = project.description ?? project.root_dir;
-    this.tooltip = buildUserProjectTooltip(project);
-    this.contextValue = "userProject";
-    this.iconPath = new vscode.ThemeIcon("project");
+/** Intermediate directory node in the "tree" display mode of Projects. */
+export class DirectoryItem extends vscode.TreeItem {
+  constructor(
+    readonly path: string,
+    label: string,
+  ) {
+    super(label, vscode.TreeItemCollapsibleState.Expanded);
+    this.id = `dirnode:${path}`;
+    this.contextValue = "directory";
+    this.iconPath = vscode.ThemeIcon.Folder;
+    this.tooltip = path;
   }
 }
 
@@ -58,21 +71,6 @@ export class TagItem extends vscode.TreeItem {
   }
 }
 
-/** A directory belonging to a user project (root or extra). */
-export class ProjectDirItem extends vscode.TreeItem {
-  constructor(
-    readonly projectName: string,
-    readonly dir: string,
-    readonly isRoot: boolean,
-  ) {
-    super(dir, vscode.TreeItemCollapsibleState.None);
-    this.id = `dir:${projectName}:${dir}`;
-    this.description = isRoot ? "root" : undefined;
-    this.contextValue = isRoot ? "projectDirRoot" : "projectDirExtra";
-    this.iconPath = new vscode.ThemeIcon(isRoot ? "root-folder" : "folder");
-  }
-}
-
 /** Leaf shown when a collection is empty. */
 export class MessageItem extends vscode.TreeItem {
   constructor(message: string) {
@@ -84,24 +82,26 @@ export class MessageItem extends vscode.TreeItem {
 function buildTooltip(s: SessionSummary): vscode.MarkdownString {
   const md = new vscode.MarkdownString();
   md.appendMarkdown(`**${s.title ?? s.session_id}**\n\n`);
+  if (s.custom_name) {
+    md.appendMarkdown(`- Renamed (custom name)\n`);
+  }
   md.appendMarkdown(`- Source: ${s.source}\n`);
   md.appendMarkdown(`- Project: \`${s.project}\`\n`);
   md.appendMarkdown(`- Date: ${formatDate(s.timestamp)}\n`);
   if (s.tags.length > 0) {
     md.appendMarkdown(`- Tags: ${s.tags.join(", ")}\n`);
   }
+  md.appendMarkdown(`- ID: \`${s.session_id}\`\n`);
   return md;
 }
 
-function buildUserProjectTooltip(p: UserProject): vscode.MarkdownString {
+function buildProjectTooltip(g: ProjectGroup): vscode.MarkdownString {
   const md = new vscode.MarkdownString();
-  md.appendMarkdown(`**${p.name}**\n\n`);
-  md.appendMarkdown(`- Root: \`${p.root_dir}\`\n`);
-  if (p.dirs.length > 0) {
-    md.appendMarkdown(`- Dirs: ${p.dirs.length}\n`);
-  }
-  if (p.pinned_sessions.length > 0) {
-    md.appendMarkdown(`- Pinned: ${p.pinned_sessions.length}\n`);
+  md.appendMarkdown(`**${g.name}**\n\n`);
+  md.appendMarkdown(`- Path: \`${g.path}\`\n`);
+  md.appendMarkdown(`- Sessions: ${g.session_count}\n`);
+  if ((g.tags ?? []).length > 0) {
+    md.appendMarkdown(`- Tags: ${(g.tags ?? []).join(", ")}\n`);
   }
   return md;
 }

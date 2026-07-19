@@ -9,6 +9,8 @@ export interface ProjectDetailsInput {
   dirs: string[];
   pinnedSessions: string[];
   description: string | null;
+  /** Tags attached to the project directory itself. */
+  tags?: string[];
   /** Sessions belonging to this project. */
   sessions: SessionSummary[];
 }
@@ -35,6 +37,11 @@ export function renderProject(input: ProjectDetailsInput): string {
   }
   if (input.pinnedSessions.length > 0) {
     lines.push(`- **Pinned sessions:** ${input.pinnedSessions.length}`);
+  }
+  if ((input.tags ?? []).length > 0) {
+    lines.push(
+      `- **Project tags:** ${(input.tags ?? []).map((t) => `\`${t}\``).join(", ")}`,
+    );
   }
   lines.push("");
 

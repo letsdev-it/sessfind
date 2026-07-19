@@ -7,9 +7,7 @@ import type {
   SearchResult,
   SessionDetail,
   SessionSummary,
-  TagCount,
   ToolInfo,
-  UserProject,
 } from "./types";
 
 const MAX_BUFFER = 64 * 1024 * 1024; // large JSON dumps
@@ -114,14 +112,6 @@ export class SessfindClient {
     return this.runJson<ProjectGroup[]>(["projects", "list", "--json"]);
   }
 
-  tags(): Promise<TagCount[]> {
-    return this.runJson<TagCount[]>(["tag", "list", "--json"]);
-  }
-
-  userProjects(): Promise<UserProject[]> {
-    return this.runJson<UserProject[]>(["project", "list", "--json"]);
-  }
-
   show(sessionId: string): Promise<SessionDetail> {
     return this.runJson<SessionDetail>(["show", sessionId, "--json"]);
   }
@@ -154,33 +144,23 @@ export class SessfindClient {
     this.invalidate();
   }
 
-  async projectCreate(name: string, root: string): Promise<void> {
-    await this.run(["project", "create", name, "--root", root]);
+  async projectTagAdd(dir: string, tags: string[]): Promise<void> {
+    await this.run(["tag", "add-project", dir, ...tags]);
     this.invalidate();
   }
 
-  async projectDelete(name: string): Promise<void> {
-    await this.run(["project", "delete", name]);
+  async projectTagRemove(dir: string, tags: string[]): Promise<void> {
+    await this.run(["tag", "rm-project", dir, ...tags]);
     this.invalidate();
   }
 
-  async projectAddDir(name: string, dir: string): Promise<void> {
-    await this.run(["project", "add-dir", name, dir]);
-    this.invalidate();
-  }
-
-  async projectRemoveDir(name: string, dir: string): Promise<void> {
-    await this.run(["project", "rm-dir", name, dir]);
-    this.invalidate();
-  }
-
-  async projectPin(name: string, sessionId: string): Promise<void> {
-    await this.run(["project", "add-session", name, sessionId]);
-    this.invalidate();
-  }
-
-  async projectUnpin(name: string, sessionId: string): Promise<void> {
-    await this.run(["project", "rm-session", name, sessionId]);
+  /** Set a custom display name, or clear it when `name` is null. */
+  async sessionRename(sessionId: string, name: string | null): Promise<void> {
+    if (name === null) {
+      await this.run(["sessions", "rename", sessionId, "--clear"]);
+    } else {
+      await this.run(["sessions", "rename", sessionId, name]);
+    }
     this.invalidate();
   }
 
