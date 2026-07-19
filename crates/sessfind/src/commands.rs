@@ -5,7 +5,8 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use sessfind_common::{
-    Capabilities, ProjectGroup, SearchMethods, SessionSummary, new_session_command, resume_command,
+    Capabilities, ProjectGroup, SearchMethods, SessionSummary, ToolInfo, new_session_command,
+    resume_command,
 };
 
 use crate::indexer::engine::IndexEngine;
@@ -25,6 +26,7 @@ const FEATURES: &[&str] = &[
     "resume-spec",
     "tags",
     "user-projects",
+    "tools-list",
 ];
 
 pub fn session_summary(r: &SearchResult) -> SessionSummary {
@@ -392,6 +394,52 @@ pub fn stats(engine: &IndexEngine, json: bool) -> Result<()> {
         "\x1b[90mIndex location: {}\x1b[0m",
         config::data_dir().display()
     );
+    Ok(())
+}
+
+// ── Tools ──
+
+/// AI CLI tools found on PATH (binary name == source name for all sources).
+fn installed_tools() -> Vec<Source> {
+    [
+        Source::ClaudeCode,
+        Source::OpenCode,
+        Source::Copilot,
+        Source::Cursor,
+        Source::Codex,
+    ]
+    .into_iter()
+    .filter(|s| which::which(s.as_str()).is_ok())
+    .collect()
+}
+
+/// List installed tools with a ready new-session command for `dir`.
+pub fn tools_list(dir: Option<&str>, json: bool) -> Result<()> {
+    let dir = match dir {
+        Some(d) => d.to_string(),
+        None => std::env::current_dir()?.to_string_lossy().to_string(),
+    };
+    let tools: Vec<ToolInfo> = installed_tools()
+        .into_iter()
+        .map(|source| ToolInfo {
+            name: source.as_str().to_string(),
+            new_session: new_session_command(source, &dir),
+        })
+        .collect();
+
+    if json {
+        println!("{}", serde_json::to_string(&tools)?);
+        return Ok(());
+    }
+    if tools.is_empty() {
+        println!("No AI CLI tools found on PATH.");
+        return Ok(());
+    }
+    println!("\x1b[1m{:<12} New session command\x1b[0m", "Tool");
+    println!("\x1b[90m{}\x1b[0m", "-".repeat(50));
+    for t in &tools {
+        println!("{:<12} {}", t.name, t.new_session.args.join(" "));
+    }
     Ok(())
 }
 

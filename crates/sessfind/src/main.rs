@@ -105,6 +105,11 @@ enum Commands {
         #[command(subcommand)]
         action: ProjectsAction,
     },
+    /// List installed AI CLI tools
+    Tools {
+        #[command(subcommand)]
+        action: ToolsAction,
+    },
     /// Manage tags on sessions
     Tag {
         #[command(subcommand)]
@@ -170,6 +175,19 @@ enum SessionsAction {
 enum ProjectsAction {
     /// List auto-grouped projects (grouped by session directory)
     List {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ToolsAction {
+    /// List installed AI CLI tools with new-session commands
+    List {
+        /// Directory the new-session commands should run in (default: cwd)
+        #[arg(long)]
+        dir: Option<String>,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -452,6 +470,11 @@ fn main() -> Result<()> {
         } => {
             let engine = open_engine()?;
             commands::projects_list(&engine, json)?;
+        }
+        Commands::Tools {
+            action: ToolsAction::List { dir, json },
+        } => {
+            commands::tools_list(dir.as_deref(), json)?;
         }
         Commands::Tag { action } => {
             let store = open_metadata()?;

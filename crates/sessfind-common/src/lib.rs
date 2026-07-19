@@ -172,6 +172,14 @@ pub struct UserProject {
     pub created_at: DateTime<Utc>,
 }
 
+/// An installed AI CLI tool, with a ready-to-run new-session command for a
+/// given directory. Produced by `sessfind tools list --dir <dir> --json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolInfo {
+    pub name: String,
+    pub new_session: CommandSpec,
+}
+
 /// A tag with the number of sessions carrying it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TagCount {
@@ -390,6 +398,19 @@ mod tests {
         }"#;
         let back: SessionSummary = serde_json::from_str(json).unwrap();
         assert!(back.tags.is_empty());
+    }
+
+    #[test]
+    fn tool_info_serde_roundtrip() {
+        let tool = ToolInfo {
+            name: "claude".into(),
+            new_session: new_session_command(Source::ClaudeCode, "/proj"),
+        };
+        let json = serde_json::to_string(&tool).unwrap();
+        let back: ToolInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.name, "claude");
+        assert_eq!(back.new_session.args, vec!["claude"]);
+        assert_eq!(back.new_session.cwd.as_deref(), Some("/proj"));
     }
 
     #[test]

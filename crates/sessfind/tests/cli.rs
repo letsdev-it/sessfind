@@ -210,6 +210,23 @@ fn stats_json_parses() {
     assert!(stats["semantic"]["available"].is_boolean());
 }
 
+// ── Tools ──
+
+#[test]
+fn tools_list_json_parses() {
+    let output = sessfind()
+        .args(["tools", "list", "--dir", "/tmp/example", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let tools: Vec<sessfind_common::ToolInfo> = serde_json::from_str(&stdout).unwrap();
+    for t in &tools {
+        assert!(!t.new_session.args.is_empty());
+        assert_eq!(t.new_session.cwd.as_deref(), Some("/tmp/example"));
+    }
+}
+
 // ── Tags & user projects ──
 
 #[test]
