@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { registerManageCommands } from "./commands/manage";
 import { startNewSession } from "./commands/newSession";
-import { runSearch } from "./commands/search";
+import { availableMethods, preferredMethod } from "./commands/searchHelpers";
 import { runCommandSpec } from "./commands/terminal";
 import {
   PROJECT_SCHEME,
@@ -16,7 +16,11 @@ import {
   SessfindClient,
   SessfindError,
 } from "./sessfind/client";
-import { SUPPORTED_JSON_API_VERSION, type Capabilities } from "./sessfind/types";
+import {
+  SUPPORTED_JSON_API_VERSION,
+  type Capabilities,
+  type SearchMethod,
+} from "./sessfind/types";
 import type { SessionFilter } from "./state/filter";
 import { AutoProjectsTreeProvider } from "./views/autoProjectsTree";
 import {
@@ -88,32 +92,49 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     tags.refresh();
   };
 
-  // Queries from the search box: filter by substrings immediately, then
-  // refine with engine full-content matches. A sequence counter drops results
-  // of superseded queries (the user kept typing).
+  // Queries from the search box. Instant methods (fts/fuzzy): filter by
+  // substrings immediately, then refine with engine full-content matches.
+  // Deferred methods (semantic/llm): engine matches only, once they arrive.
+  // A sequence counter drops results of superseded queries.
   let filterSeq = 0;
-  const applyQuery = async (raw: string) => {
+  const applyQuery = async (raw: string, method: SearchMethod = "fts") => {
     const query = raw.trim();
     const seq = ++filterSeq;
     if (query.length === 0) {
+      searchBox.setBusy(false);
       await setFilter(undefined);
       return;
     }
-    await setFilter({ query, engineIds: new Set() });
+    const instant = method === "fts" || method === "fuzzy";
+    if (instant) {
+      await setFilter({ query, engineIds: new Set() });
+    }
+    searchBox.setBusy(true);
     try {
-      const results = await client.search(query, "fts", 500);
+      const results = await client.search(query, method, 500);
       if (seq === filterSeq) {
         await setFilter({
           query,
           engineIds: new Set(results.map((r) => r.session_id)),
+          engineOnly: !instant,
         });
       }
     } catch {
-      // Bad query syntax or engine failure — substring filtering stays active.
+      // Bad query syntax or engine failure — for instant methods substring
+      // filtering stays active; for deferred ones fall back to substrings.
+      if (seq === filterSeq && !instant) {
+        await setFilter({ query, engineIds: new Set() });
+      }
+    } finally {
+      if (seq === filterSeq) {
+        searchBox.setBusy(false);
+      }
     }
   };
 
-  const searchBox = new SearchBoxViewProvider((q) => void applyQuery(q));
+  const searchBox = new SearchBoxViewProvider(
+    (q, method) => void applyQuery(q, method),
+  );
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       SearchBoxViewProvider.viewId,
@@ -124,8 +145,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(...registerManageCommands(client, refreshAll));
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("sessfind.search", () => runSearch(client)),
-
     vscode.commands.registerCommand("sessfind.refresh", refreshAll),
 
     vscode.commands.registerCommand("sessfind.setFilter", () => {
@@ -248,7 +267,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   // Compatibility gate: probe the binary once on activation.
-  await checkCompatibility(client, refreshAll);
+  const caps = await checkCompatibility(client);
+  if (caps) {
+    const methods = availableMethods(caps);
+    const config = vscode.workspace.getConfiguration("sessfind");
+    searchBox.setMethods(
+      methods,
+      preferredMethod(config.get<string>("defaultSearchMethod"), methods),
+    );
+    refreshAll();
+  }
 }
 
 export function deactivate(): void {
@@ -264,8 +292,7 @@ async function openMarkdownPreview(uri: vscode.Uri): Promise<void> {
 
 async function checkCompatibility(
   client: SessfindClient,
-  onReady: () => void,
-): Promise<void> {
+): Promise<Capabilities | undefined> {
   let caps: Capabilities;
   try {
     caps = await client.capabilities();
@@ -287,7 +314,7 @@ async function checkCompatibility(
         "sessfind does not support the JSON API. Please upgrade sessfind (>= 0.9).",
       );
     }
-    return;
+    return undefined;
   }
 
   if (caps.json_api_version > SUPPORTED_JSON_API_VERSION) {
@@ -303,7 +330,7 @@ async function checkCompatibility(
     caps.features,
   );
 
-  onReady();
+  return caps;
 }
 
 async function pickSessionId(

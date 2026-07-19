@@ -9,6 +9,11 @@ import type { SessionSummary } from "../sessfind/types";
 export interface SessionFilter {
   query: string;
   engineIds: ReadonlySet<string>;
+  /**
+   * When true (semantic/llm filters), only engine matches count — substring
+   * fallback would drown the ranked results in incidental text matches.
+   */
+  engineOnly?: boolean;
 }
 
 export function sessionMatchesFilter(
@@ -20,6 +25,9 @@ export function sessionMatchesFilter(
   }
   if (filter.engineIds.has(session.session_id)) {
     return true;
+  }
+  if (filter.engineOnly) {
+    return false;
   }
   const needle = filter.query.toLowerCase();
   if (needle.length === 0) {

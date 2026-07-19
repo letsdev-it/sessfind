@@ -51,6 +51,15 @@ describe("sessionMatchesFilter", () => {
       }),
     ).toBe(false);
   });
+
+  it("engineOnly ignores substring matches", () => {
+    const f = { query: "auth", engineIds: new Set(["other"]), engineOnly: true };
+    // "auth" appears in the title, but engineOnly filters demand an id match.
+    expect(sessionMatchesFilter(session({}), f)).toBe(false);
+    expect(
+      sessionMatchesFilter(session({ session_id: "other" }), f),
+    ).toBe(true);
+  });
 });
 
 describe("applyFilter", () => {

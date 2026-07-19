@@ -47,12 +47,6 @@
     },
     "commands": [
       {
-        "command": "sessfind.search",
-        "title": "Search Sessions",
-        "category": "Sessfind",
-        "icon": "$(search)"
-      },
-      {
         "command": "sessfind.refresh",
         "title": "Refresh",
         "category": "Sessfind",
@@ -150,16 +144,6 @@
     ],
     "menus": {
       "view/title": [
-        {
-          "command": "sessfind.search",
-          "when": "view == sessfind.autoProjects",
-          "group": "navigation@0"
-        },
-        {
-          "command": "sessfind.clearFilter",
-          "when": "view == sessfind.searchBox && sessfind.filterActive",
-          "group": "navigation@1"
-        },
         {
           "command": "sessfind.indexNow",
           "when": "view == sessfind.autoProjects",
