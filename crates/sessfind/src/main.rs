@@ -115,11 +115,6 @@ enum Commands {
         #[command(subcommand)]
         action: TagAction,
     },
-    /// Manage user-defined projects
-    Project {
-        #[command(subcommand)]
-        action: ProjectAction,
-    },
     /// Dump all indexed chunks as JSONL (for plugins)
     DumpChunks,
     /// Set LLM model override for a provider
@@ -156,9 +151,6 @@ enum SessionsAction {
         /// Filter by tag
         #[arg(long, short = 't')]
         tag: Option<String>,
-        /// Filter by membership in a user-defined project
-        #[arg(long)]
-        user_project: Option<String>,
         /// Max sessions (default: all)
         #[arg(long, short = 'n')]
         limit: Option<usize>,
@@ -235,40 +227,6 @@ enum TagAction {
         #[arg(required = true)]
         tags: Vec<String>,
     },
-}
-
-#[derive(Subcommand)]
-enum ProjectAction {
-    /// Create a user project with a root directory
-    Create {
-        name: String,
-        /// Root directory (new sessions launch here)
-        #[arg(long)]
-        root: String,
-    },
-    /// Delete a user project
-    Delete { name: String },
-    /// List user projects
-    List {
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-    },
-    /// Show one user project
-    Show {
-        name: String,
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-    },
-    /// Add an extra directory to a user project
-    AddDir { name: String, dir: String },
-    /// Remove an extra directory from a user project
-    RmDir { name: String, dir: String },
-    /// Pin a session to a user project
-    AddSession { name: String, session_id: String },
-    /// Unpin a session from a user project
-    RmSession { name: String, session_id: String },
 }
 
 #[derive(Subcommand)]
@@ -459,7 +417,6 @@ fn main() -> Result<()> {
                 source,
                 project,
                 tag,
-                user_project,
                 limit,
                 sort,
                 json,
@@ -478,7 +435,6 @@ fn main() -> Result<()> {
                         source,
                         project,
                         tag,
-                        user_project,
                         limit,
                         sort,
                         json,
@@ -526,36 +482,6 @@ fn main() -> Result<()> {
                 }
                 TagAction::RmProject { dir, tags } => {
                     commands::tag_rm_project(&store, &dir, &tags)?;
-                }
-            }
-        }
-        Commands::Project { action } => {
-            let store = open_metadata()?;
-            match action {
-                ProjectAction::Create { name, root } => {
-                    commands::project_create(&store, &name, &root)?;
-                }
-                ProjectAction::Delete { name } => {
-                    commands::project_delete(&store, &name)?;
-                }
-                ProjectAction::List { json } => {
-                    commands::project_list(&store, json)?;
-                }
-                ProjectAction::Show { name, json } => {
-                    commands::project_show(&store, &name, json)?;
-                }
-                ProjectAction::AddDir { name, dir } => {
-                    commands::project_add_dir(&store, &name, &dir)?;
-                }
-                ProjectAction::RmDir { name, dir } => {
-                    commands::project_rm_dir(&store, &name, &dir)?;
-                }
-                ProjectAction::AddSession { name, session_id } => {
-                    let engine = open_engine()?;
-                    commands::project_add_session(&engine, &store, &name, &session_id)?;
-                }
-                ProjectAction::RmSession { name, session_id } => {
-                    commands::project_rm_session(&store, &name, &session_id)?;
                 }
             }
         }

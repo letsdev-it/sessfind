@@ -38,15 +38,6 @@ export interface ProjectGroup {
   tags?: string[];
 }
 
-export interface UserProject {
-  name: string;
-  root_dir: string;
-  dirs: string[];
-  pinned_sessions: string[];
-  description: string | null;
-  created_at: string;
-}
-
 export interface TagCount {
   tag: string;
   session_count: number;

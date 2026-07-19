@@ -164,21 +164,6 @@ pub struct ProjectGroup {
     pub tags: Vec<String>,
 }
 
-/// A user-defined project: a root directory (where new sessions launch),
-/// optional extra directories, and manually pinned sessions.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserProject {
-    pub name: String,
-    pub root_dir: String,
-    #[serde(default)]
-    pub dirs: Vec<String>,
-    #[serde(default)]
-    pub pinned_sessions: Vec<String>,
-    /// Reserved for LLM-generated project summaries.
-    pub description: Option<String>,
-    pub created_at: DateTime<Utc>,
-}
-
 /// An installed AI CLI tool, with a ready-to-run new-session command for a
 /// given directory. Produced by `sessfind tools list --dir <dir> --json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]

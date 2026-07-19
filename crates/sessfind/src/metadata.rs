@@ -6,9 +6,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::Result;
-use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OptionalExtension};
-use sessfind_common::{TagCount, UserProject};
+use rusqlite::Connection;
+use sessfind_common::TagCount;
 
 pub struct MetadataStore {
     conn: Connection,
@@ -30,23 +29,6 @@ impl MetadataStore {
             );
             CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);
 
-            CREATE TABLE IF NOT EXISTS user_projects (
-                id          INTEGER PRIMARY KEY,
-                name        TEXT NOT NULL UNIQUE,
-                root_dir    TEXT NOT NULL,
-                description TEXT,
-                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-            CREATE TABLE IF NOT EXISTS user_project_dirs (
-                project_id INTEGER NOT NULL REFERENCES user_projects(id) ON DELETE CASCADE,
-                dir        TEXT NOT NULL,
-                PRIMARY KEY (project_id, dir)
-            );
-            CREATE TABLE IF NOT EXISTS user_project_sessions (
-                project_id INTEGER NOT NULL REFERENCES user_projects(id) ON DELETE CASCADE,
-                session_id TEXT NOT NULL,
-                PRIMARY KEY (project_id, session_id)
-            );
             CREATE TABLE IF NOT EXISTS session_names (
                 session_id TEXT PRIMARY KEY,
                 name       TEXT NOT NULL,
@@ -218,168 +200,6 @@ impl MetadataStore {
         }
         Ok(map)
     }
-
-    // ── User projects ──
-
-    pub fn create_project(&self, name: &str, root_dir: &str) -> Result<()> {
-        self.conn.execute(
-            "INSERT INTO user_projects (name, root_dir) VALUES (?1, ?2)",
-            (name, root_dir),
-        )?;
-        Ok(())
-    }
-
-    pub fn delete_project(&self, name: &str) -> Result<bool> {
-        let n = self
-            .conn
-            .execute("DELETE FROM user_projects WHERE name = ?1", [name])?;
-        Ok(n > 0)
-    }
-
-    fn project_id(&self, name: &str) -> Result<Option<i64>> {
-        let id = self
-            .conn
-            .query_row(
-                "SELECT id FROM user_projects WHERE name = ?1",
-                [name],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()?;
-        Ok(id)
-    }
-
-    pub fn add_dir(&self, name: &str, dir: &str) -> Result<()> {
-        let id = self
-            .project_id(name)?
-            .ok_or_else(|| anyhow::anyhow!("No user project named '{name}'"))?;
-        self.conn.execute(
-            "INSERT OR IGNORE INTO user_project_dirs (project_id, dir) VALUES (?1, ?2)",
-            (id, dir),
-        )?;
-        Ok(())
-    }
-
-    pub fn remove_dir(&self, name: &str, dir: &str) -> Result<bool> {
-        let id = self
-            .project_id(name)?
-            .ok_or_else(|| anyhow::anyhow!("No user project named '{name}'"))?;
-        let n = self.conn.execute(
-            "DELETE FROM user_project_dirs WHERE project_id = ?1 AND dir = ?2",
-            (id, dir),
-        )?;
-        Ok(n > 0)
-    }
-
-    pub fn pin_session(&self, name: &str, session_id: &str) -> Result<()> {
-        let id = self
-            .project_id(name)?
-            .ok_or_else(|| anyhow::anyhow!("No user project named '{name}'"))?;
-        self.conn.execute(
-            "INSERT OR IGNORE INTO user_project_sessions (project_id, session_id) VALUES (?1, ?2)",
-            (id, session_id),
-        )?;
-        Ok(())
-    }
-
-    pub fn unpin_session(&self, name: &str, session_id: &str) -> Result<bool> {
-        let id = self
-            .project_id(name)?
-            .ok_or_else(|| anyhow::anyhow!("No user project named '{name}'"))?;
-        let n = self.conn.execute(
-            "DELETE FROM user_project_sessions WHERE project_id = ?1 AND session_id = ?2",
-            (id, session_id),
-        )?;
-        Ok(n > 0)
-    }
-
-    pub fn get_project(&self, name: &str) -> Result<Option<UserProject>> {
-        let row = self
-            .conn
-            .query_row(
-                "SELECT id, name, root_dir, description, created_at FROM user_projects WHERE name = ?1",
-                [name],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, Option<String>>(3)?,
-                        row.get::<_, String>(4)?,
-                    ))
-                },
-            )
-            .optional()?;
-
-        let Some((id, name, root_dir, description, created_at)) = row else {
-            return Ok(None);
-        };
-
-        Ok(Some(UserProject {
-            name,
-            root_dir,
-            dirs: self.project_dirs(id)?,
-            pinned_sessions: self.project_pinned(id)?,
-            description,
-            created_at: parse_sqlite_datetime(&created_at),
-        }))
-    }
-
-    pub fn list_projects(&self) -> Result<Vec<UserProject>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, name, root_dir, description, created_at FROM user_projects ORDER BY name",
-        )?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                    row.get::<_, String>(4)?,
-                ))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-
-        let mut projects = Vec::with_capacity(rows.len());
-        for (id, name, root_dir, description, created_at) in rows {
-            projects.push(UserProject {
-                name,
-                root_dir,
-                dirs: self.project_dirs(id)?,
-                pinned_sessions: self.project_pinned(id)?,
-                description,
-                created_at: parse_sqlite_datetime(&created_at),
-            });
-        }
-        Ok(projects)
-    }
-
-    fn project_dirs(&self, project_id: i64) -> Result<Vec<String>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT dir FROM user_project_dirs WHERE project_id = ?1 ORDER BY dir")?;
-        let dirs = stmt
-            .query_map([project_id], |row| row.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(dirs)
-    }
-
-    fn project_pinned(&self, project_id: i64) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT session_id FROM user_project_sessions WHERE project_id = ?1 ORDER BY session_id",
-        )?;
-        let ids = stmt
-            .query_map([project_id], |row| row.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(ids)
-    }
-}
-
-fn parse_sqlite_datetime(s: &str) -> DateTime<Utc> {
-    // SQLite `datetime('now')` yields "YYYY-MM-DD HH:MM:SS" in UTC.
-    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-        .map(|dt| dt.and_utc())
-        .unwrap_or_else(|_| Utc::now())
 }
 
 #[cfg(test)]
@@ -443,57 +263,6 @@ mod tests {
     }
 
     #[test]
-    fn project_crud() {
-        let (_d, s) = store();
-        s.create_project("myproj", "/home/me/proj").unwrap();
-        s.add_dir("myproj", "/home/me/extra").unwrap();
-        s.add_dir("myproj", "/home/me/extra").unwrap(); // idempotent
-        s.pin_session("myproj", "sess-xyz").unwrap();
-
-        let p = s.get_project("myproj").unwrap().unwrap();
-        assert_eq!(p.name, "myproj");
-        assert_eq!(p.root_dir, "/home/me/proj");
-        assert_eq!(p.dirs, vec!["/home/me/extra"]);
-        assert_eq!(p.pinned_sessions, vec!["sess-xyz"]);
-        assert!(p.description.is_none());
-
-        assert!(s.remove_dir("myproj", "/home/me/extra").unwrap());
-        assert!(s.unpin_session("myproj", "sess-xyz").unwrap());
-        let p = s.get_project("myproj").unwrap().unwrap();
-        assert!(p.dirs.is_empty());
-        assert!(p.pinned_sessions.is_empty());
-    }
-
-    #[test]
-    fn project_delete_cascades() {
-        let (_d, s) = store();
-        s.create_project("p", "/root").unwrap();
-        s.add_dir("p", "/d").unwrap();
-        s.pin_session("p", "sess").unwrap();
-        assert!(s.delete_project("p").unwrap());
-        assert!(s.get_project("p").unwrap().is_none());
-        assert!(!s.delete_project("p").unwrap());
-        // Recreate with the same name works — cascade cleared child rows.
-        s.create_project("p", "/root2").unwrap();
-        let p = s.get_project("p").unwrap().unwrap();
-        assert!(p.dirs.is_empty());
-        assert!(p.pinned_sessions.is_empty());
-    }
-
-    #[test]
-    fn create_duplicate_project_fails() {
-        let (_d, s) = store();
-        s.create_project("dup", "/a").unwrap();
-        assert!(s.create_project("dup", "/b").is_err());
-    }
-
-    #[test]
-    fn add_dir_to_missing_project_fails() {
-        let (_d, s) = store();
-        assert!(s.add_dir("nope", "/d").is_err());
-    }
-
-    #[test]
     fn session_name_set_clear() {
         let (_d, s) = store();
         s.set_session_name("s1", "My great session").unwrap();
@@ -541,10 +310,18 @@ mod tests {
         {
             let s = MetadataStore::open(&path).unwrap();
             s.add_tag("sess", "keep").unwrap();
-            s.create_project("proj", "/root").unwrap();
+            s.set_session_name("sess", "Named").unwrap();
+            s.add_project_tag("/root", "hub").unwrap();
         }
         let s = MetadataStore::open(&path).unwrap();
         assert_eq!(s.tags_for_session("sess").unwrap(), vec!["keep"]);
-        assert!(s.get_project("proj").unwrap().is_some());
+        assert_eq!(
+            s.names_for_sessions(&["sess".into()])
+                .unwrap()
+                .get("sess")
+                .map(String::as_str),
+            Some("Named")
+        );
+        assert!(s.project_tags_map().unwrap().contains_key("/root"));
     }
 }

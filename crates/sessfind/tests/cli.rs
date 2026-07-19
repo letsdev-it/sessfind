@@ -232,7 +232,12 @@ fn tools_list_json_parses() {
 #[test]
 fn rename_unknown_session_fails() {
     sessfind()
-        .args(["sessions", "rename", "definitely-not-a-real-session", "Name"])
+        .args([
+            "sessions",
+            "rename",
+            "definitely-not-a-real-session",
+            "Name",
+        ])
         .assert()
         .failure()
         .stderr(predicate::str::contains("No indexed session"));
@@ -253,26 +258,6 @@ fn tag_list_json_parses() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     let _tags: Vec<sessfind_common::TagCount> = serde_json::from_str(&stdout).unwrap();
-}
-
-#[test]
-fn project_list_json_parses() {
-    let output = sessfind()
-        .args(["project", "list", "--json"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    let _projects: Vec<sessfind_common::UserProject> = serde_json::from_str(&stdout).unwrap();
-}
-
-#[test]
-fn project_show_unknown_fails() {
-    sessfind()
-        .args(["project", "show", "no-such-project-xyz"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("No project named"));
 }
 
 // ── Index flag ──

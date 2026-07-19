@@ -25,7 +25,6 @@ const FEATURES: &[&str] = &[
     "projects-auto",
     "resume-spec",
     "tags",
-    "user-projects",
     "tools-list",
     "session-rename",
     "project-tags",
@@ -67,7 +66,6 @@ pub struct SessionListOpts {
     pub source: Option<String>,
     pub project: Option<String>,
     pub tag: Option<String>,
-    pub user_project: Option<String>,
     pub limit: Option<usize>,
     pub sort: SortOrder,
     pub json: bool,
@@ -96,19 +94,6 @@ pub fn sessions_list(
                 || project_tags
                     .get(&r.project)
                     .is_some_and(|tags| tags.contains(tag))
-        });
-    }
-    if let Some(name) = &opts.user_project {
-        let project = store
-            .get_project(name)?
-            .ok_or_else(|| anyhow::anyhow!("No user project named '{name}'"))?;
-        let dirs: std::collections::HashSet<&str> = std::iter::once(project.root_dir.as_str())
-            .chain(project.dirs.iter().map(|d| d.as_str()))
-            .collect();
-        let pinned: std::collections::HashSet<&str> =
-            project.pinned_sessions.iter().map(|s| s.as_str()).collect();
-        sessions.retain(|r| {
-            dirs.contains(r.project.as_str()) || pinned.contains(r.session_id.as_str())
         });
     }
     apply_sort(&mut sessions, opts.sort);
@@ -595,114 +580,6 @@ pub fn session_rename(
                 println!("No custom name set for {session_id}");
             }
         }
-    }
-    Ok(())
-}
-
-// ── User projects ──
-
-pub fn project_create(store: &MetadataStore, name: &str, root: &str) -> Result<()> {
-    store.create_project(name, root)?;
-    println!("Created project '{name}' rooted at {root}");
-    Ok(())
-}
-
-pub fn project_delete(store: &MetadataStore, name: &str) -> Result<()> {
-    if store.delete_project(name)? {
-        println!("Deleted project '{name}'");
-    } else {
-        println!("No project named '{name}'");
-    }
-    Ok(())
-}
-
-pub fn project_list(store: &MetadataStore, json: bool) -> Result<()> {
-    let projects = store.list_projects()?;
-    if json {
-        println!("{}", serde_json::to_string(&projects)?);
-        return Ok(());
-    }
-    if projects.is_empty() {
-        println!("No user projects yet.");
-        return Ok(());
-    }
-    println!(
-        "\x1b[1m{:<24} {:>5} {:>7} Root\x1b[0m",
-        "Project", "Dirs", "Pinned"
-    );
-    println!("\x1b[90m{}\x1b[0m", "-".repeat(80));
-    for p in &projects {
-        println!(
-            "{:<24} {:>5} {:>7} \x1b[90m{}\x1b[0m",
-            truncate_str(&p.name, 22),
-            p.dirs.len(),
-            p.pinned_sessions.len(),
-            p.root_dir
-        );
-    }
-    Ok(())
-}
-
-pub fn project_show(store: &MetadataStore, name: &str, json: bool) -> Result<()> {
-    let project = store
-        .get_project(name)?
-        .ok_or_else(|| anyhow::anyhow!("No project named '{name}'"))?;
-    if json {
-        println!("{}", serde_json::to_string(&project)?);
-        return Ok(());
-    }
-    println!("\x1b[1mProject:\x1b[0m {}", project.name);
-    println!("\x1b[1mRoot:\x1b[0m    {}", project.root_dir);
-    if let Some(desc) = &project.description {
-        println!("\x1b[1mAbout:\x1b[0m   {desc}");
-    }
-    if !project.dirs.is_empty() {
-        println!("\x1b[1mDirs:\x1b[0m");
-        for d in &project.dirs {
-            println!("  {d}");
-        }
-    }
-    if !project.pinned_sessions.is_empty() {
-        println!("\x1b[1mPinned sessions:\x1b[0m");
-        for s in &project.pinned_sessions {
-            println!("  {s}");
-        }
-    }
-    Ok(())
-}
-
-pub fn project_add_dir(store: &MetadataStore, name: &str, dir: &str) -> Result<()> {
-    store.add_dir(name, dir)?;
-    println!("Added {dir} to '{name}'");
-    Ok(())
-}
-
-pub fn project_rm_dir(store: &MetadataStore, name: &str, dir: &str) -> Result<()> {
-    if store.remove_dir(name, dir)? {
-        println!("Removed {dir} from '{name}'");
-    } else {
-        println!("{dir} was not a directory of '{name}'");
-    }
-    Ok(())
-}
-
-pub fn project_add_session(
-    engine: &IndexEngine,
-    store: &MetadataStore,
-    name: &str,
-    session_id: &str,
-) -> Result<()> {
-    ensure_session_exists(engine, session_id)?;
-    store.pin_session(name, session_id)?;
-    println!("Pinned {session_id} to '{name}'");
-    Ok(())
-}
-
-pub fn project_rm_session(store: &MetadataStore, name: &str, session_id: &str) -> Result<()> {
-    if store.unpin_session(name, session_id)? {
-        println!("Unpinned {session_id} from '{name}'");
-    } else {
-        println!("{session_id} was not pinned to '{name}'");
     }
     Ok(())
 }

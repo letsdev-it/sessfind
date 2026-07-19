@@ -76,20 +76,6 @@ sessfind sessions rename SESSION_ID "Payments refactor"
 sessfind sessions rename SESSION_ID --clear     # back to the original title
 ```
 
-## User projects
-
-A user project has a root directory (where new sessions launch), optional extra
-directories, and manually pinned sessions.
-
-```bash
-sessfind project create backend --root ~/code/backend
-sessfind project add-dir backend ~/code/shared
-sessfind project add-session backend SESSION_ID   # pin
-sessfind project show backend --json
-sessfind project list
-sessfind project delete backend
-```
-
 ## Dump all chunks as JSONL
 
 ```bash
