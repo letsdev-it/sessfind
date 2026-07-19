@@ -2,7 +2,8 @@ import esbuild from "esbuild";
 
 const watch = process.argv.includes("--watch");
 
-const options = {
+// Extension host bundle (Node).
+const extensionOptions = {
   entryPoints: ["src/extension.ts"],
   bundle: true,
   outfile: "dist/extension.js",
@@ -15,11 +16,29 @@ const options = {
   minify: !watch,
 };
 
+// Hub webview bundle (browser). The CSS import is extracted to dist/hub.css.
+const webviewOptions = {
+  entryPoints: [{ in: "src/hub/webview/main.ts", out: "hub" }],
+  bundle: true,
+  outdir: "dist",
+  platform: "browser",
+  format: "iife",
+  target: "es2022",
+  sourcemap: true,
+  minify: !watch,
+};
+
 if (watch) {
-  const ctx = await esbuild.context(options);
-  await ctx.watch();
+  const ctxs = await Promise.all([
+    esbuild.context(extensionOptions),
+    esbuild.context(webviewOptions),
+  ]);
+  await Promise.all(ctxs.map((c) => c.watch()));
   console.log("esbuild: watching…");
 } else {
-  await esbuild.build(options);
+  await Promise.all([
+    esbuild.build(extensionOptions),
+    esbuild.build(webviewOptions),
+  ]);
   console.log("esbuild: build complete");
 }

@@ -29,8 +29,12 @@ code --install-extension sessfind-*.vsix
 
 ## What you get
 
+The whole sidebar is a single custom hub: a sticky search field with
+search-method chips on top, then Projects and Tags sections with hover
+actions on every row.
+
 - **Projects** — sessions auto-grouped by their directory, shown as a flat
-  list or as the directory tree (toggle in the view title; tree mode
+  list or as the directory tree (toggle in the section header; tree mode
   disambiguates same-named projects in different locations).
 - **Tags** — organise sessions with your own tags. Tags apply to individual
   sessions or to whole project directories (sessions inherit them); a tag
