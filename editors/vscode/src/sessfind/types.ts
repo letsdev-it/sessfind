@@ -36,6 +36,8 @@ export interface ProjectGroup {
   sources: Source[];
   /** Tags attached to the whole directory. */
   tags?: string[];
+  /** LLM-generated project summary, when one has been produced. */
+  description?: string | null;
 }
 
 export interface TagCount {
@@ -46,6 +48,8 @@ export interface TagCount {
 export interface ToolInfo {
   name: string;
   new_session: CommandSpec;
+  /** Can open an interactive session with an initial prompt (project chat). */
+  chat_capable?: boolean;
 }
 
 export interface SearchMethods {

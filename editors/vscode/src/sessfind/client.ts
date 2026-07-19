@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import * as vscode from "vscode";
 import type {
   Capabilities,
+  CommandSpec,
   ProjectGroup,
   SearchMethod,
   SearchResult,
@@ -130,6 +131,30 @@ export class SessfindClient {
 
   index(): Promise<string> {
     return this.run(["index"]);
+  }
+
+  stats(): Promise<unknown> {
+    return this.runJson<unknown>(["stats", "--json"]);
+  }
+
+  /** Generate and store an LLM summary for a project directory (slow). */
+  async projectsSummarize(dir: string, tool?: string): Promise<string> {
+    const args = ["projects", "summarize", dir, "--json"];
+    if (tool) {
+      args.push("--tool", tool);
+    }
+    const out = JSON.parse(await this.run(args)) as { description: string };
+    this.invalidate();
+    return out.description;
+  }
+
+  /** Command that opens a chat about the project, context pre-loaded. */
+  projectsChat(dir: string, tool?: string): Promise<CommandSpec> {
+    const args = ["projects", "chat", dir, "--json"];
+    if (tool) {
+      args.push("--tool", tool);
+    }
+    return this.runJson<CommandSpec>(args);
   }
 
   // ── Mutations ──

@@ -41,6 +41,16 @@ actions on every row.
   node lists tagged projects first, then individually tagged sessions.
 - **Rename** — give any session a custom name; it shows in the trees, in
   search, and as the preview tab title.
+- **Project summaries (LLM)** — the ✨ action asks a detected backend
+  (claude/opencode/copilot) to describe the project from its sessions; the
+  summary shows in the project tooltip and details page.
+- **Chat about a project** — the 💬 action opens claude/opencode/codex in the
+  project root with the context pre-loaded (description, tags, recent
+  sessions with ids, and hints to query sessfind for details).
+- **Statistics** — a data-based dashboard: sessions per source, 14-day
+  activity, most active projects, tags, engine status.
+- **Git context** — the project details page appends recent commits and open
+  pull requests when `git`/`gh` are available.
 - **Project details** — open a project overview page with metadata and
   data-derived metrics: session counts per source, first/last activity, active
   days, top tags, and recent sessions.

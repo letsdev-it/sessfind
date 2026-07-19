@@ -18,6 +18,10 @@ import {
   SessionDocumentProvider,
 } from "./preview/sessionDocumentProvider";
 import {
+  STATS_SCHEME,
+  StatsDocumentProvider,
+} from "./preview/statsDocumentProvider";
+import {
   BinaryNotFoundError,
   SessfindClient,
   SessfindError,
@@ -38,7 +42,10 @@ export function activate(context: vscode.ExtensionContext): void {
   let filter: FilterPayload | null = null;
   let busy = false;
   let methods: SearchMethod[] = ["fts", "fuzzy"];
+  let llmBackends: string[] = [];
   let filterSeq = 0;
+
+  const statsProvider = new StatsDocumentProvider(client);
 
   // ── State push ──
 
@@ -49,6 +56,7 @@ export function activate(context: vscode.ExtensionContext): void {
     try {
       const caps = await client.capabilities();
       methods = availableMethods(caps);
+      llmBackends = caps.search_methods.llm;
       if (caps.json_api_version > SUPPORTED_JSON_API_VERSION) {
         vscode.window.showWarningMessage(
           `sessfind reports JSON API v${caps.json_api_version}, newer than this extension (v${SUPPORTED_JSON_API_VERSION}). Please update the extension.`,
@@ -181,6 +189,79 @@ export function activate(context: vscode.ExtensionContext): void {
         await context.globalState.update(VIEW_MODE_KEY, msg.mode);
         await pushState();
         break;
+      case "summarize": {
+        if (llmBackends.length === 0) {
+          vscode.window.showErrorMessage(
+            "sessfind: no LLM CLI tools detected (claude, opencode, copilot).",
+          );
+          break;
+        }
+        let tool = llmBackends[0];
+        if (llmBackends.length > 1) {
+          const pick = await vscode.window.showQuickPick(llmBackends, {
+            placeHolder: `Summarize “${msg.label}” with…`,
+          });
+          if (!pick) {
+            break;
+          }
+          tool = pick;
+        }
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `sessfind: summarizing ${msg.label} (${tool})…`,
+          },
+          async () => {
+            try {
+              const description = await client.projectsSummarize(
+                msg.path,
+                tool,
+              );
+              statsProvider.invalidate();
+              await pushState();
+              vscode.window.showInformationMessage(
+                `${msg.label}: ${description}`,
+              );
+            } catch (err) {
+              reportError(err);
+            }
+          },
+        );
+        break;
+      }
+      case "chat": {
+        try {
+          const tools = (await client.toolsList(msg.dir)).filter(
+            (t) => t.chat_capable,
+          );
+          if (tools.length === 0) {
+            vscode.window.showErrorMessage(
+              "sessfind: no chat-capable AI CLI tools found (claude, opencode, codex).",
+            );
+            break;
+          }
+          let tool = tools[0].name;
+          if (tools.length > 1) {
+            const pick = await vscode.window.showQuickPick(
+              tools.map((t) => t.name),
+              { placeHolder: "Chat about this project with…" },
+            );
+            if (!pick) {
+              break;
+            }
+            tool = pick;
+          }
+          const spec = await client.projectsChat(msg.dir, tool);
+          await runCommandSpec(spec, `chat: ${msg.dir}`);
+        } catch (err) {
+          reportError(err);
+        }
+        break;
+      }
+      case "stats":
+        statsProvider.invalidate();
+        await openMarkdownPreview(StatsDocumentProvider.uri);
+        break;
       case "refresh":
         await refresh();
         break;
@@ -218,6 +299,10 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.registerTextDocumentContentProvider(
       PROJECT_SCHEME,
       new ProjectDocumentProvider(client),
+    ),
+    vscode.workspace.registerTextDocumentContentProvider(
+      STATS_SCHEME,
+      statsProvider,
     ),
 
     vscode.commands.registerCommand("sessfind.refresh", () => void refresh()),

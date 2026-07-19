@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type { SessfindClient } from "../sessfind/client";
+import { execCapture } from "../util/execCapture";
 import { lastSegment } from "../views/grouping";
 import { renderProject } from "./renderProject";
 
@@ -38,15 +39,46 @@ export class ProjectDocumentProvider
     const sessions = await this.client.sessions();
     const projects = await this.client.projects();
     const group = projects.find((p) => p.path === path);
-    return renderProject({
+    const base = renderProject({
       title: lastSegment(path),
       kind: "auto",
       rootDir: path,
       dirs: [],
       pinnedSessions: [],
-      description: null,
+      description: group?.description ?? null,
       tags: group?.tags ?? [],
       sessions: sessions.filter((s) => s.project === path),
     });
+    return base + (await renderGitSections(path));
   }
+}
+
+/**
+ * Best-effort git enrichment: recent commits (git) and open PRs (gh). Either
+ * section is silently omitted when the tool is missing, the directory is not
+ * a repository, or the call times out.
+ */
+async function renderGitSections(dir: string): Promise<string> {
+  const [log, prs] = await Promise.all([
+    execCapture(
+      "git",
+      ["log", "--pretty=format:%h  %ad  %s", "--date=short", "-12"],
+      dir,
+    ),
+    execCapture(
+      "gh",
+      ["pr", "list", "--limit", "10", "--state", "open"],
+      dir,
+      5000,
+    ),
+  ]);
+
+  const lines: string[] = [];
+  if (log) {
+    lines.push("## Recent commits", "", "```", log, "```", "");
+  }
+  if (prs) {
+    lines.push("## Open pull requests", "", "```", prs, "```", "");
+  }
+  return lines.length > 0 ? `\n${lines.join("\n")}` : "";
 }

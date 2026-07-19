@@ -62,6 +62,9 @@ const ICONS = {
   listFlat: svg('<line x1="3" y1="4" x2="13" y2="4"/><line x1="3" y1="8" x2="13" y2="8"/><line x1="3" y1="12" x2="13" y2="12"/>'),
   refresh: svg('<path d="M13 8a5 5 0 1 1-1.5-3.5"/><path d="M13 2.8v2.7h-2.7"/>'),
   db: svg('<ellipse cx="8" cy="4" rx="5" ry="2"/><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4"/><path d="M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>'),
+  sparkle: svg('<path d="M8 2l1.2 3.6L13 7l-3.8 1.4L8 12l-1.2-3.6L3 7l3.8-1.4z"/><path d="M12.8 11l.5 1.5 1.5.5-1.5.5-.5 1.5-.5-1.5-1.5-.5 1.5-.5z"/>'),
+  chat: svg('<path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/>'),
+  chart: svg('<line x1="3" y1="13" x2="13" y2="13"/><line x1="4.5" y1="13" x2="4.5" y2="8"/><line x1="8" y1="13" x2="8" y2="4"/><line x1="11.5" y1="13" x2="11.5" y2="10"/>'),
 };
 
 // ── DOM helpers ──
@@ -288,6 +291,7 @@ function renderProjectsSection(model: HubModel): HTMLElement {
       tree ? "View as flat list" : "View as directory tree",
       () => send({ type: "setViewMode", mode: tree ? "list" : "tree" }),
     ),
+    iconBtn(ICONS.chart, "Statistics", () => send({ type: "stats" })),
     iconBtn(ICONS.db, "Refresh index", () => send({ type: "index" })),
     iconBtn(ICONS.refresh, "Refresh", () => send({ type: "refresh" })),
   ];
@@ -370,7 +374,9 @@ function renderProjectEntry(entry: ProjectEntry, label: string): HTMLElement {
   const isOpen = expanded.has(key);
 
   const row = el("div", "row project" + (isOpen ? " expanded" : ""));
-  row.title = group.path;
+  row.title = group.description
+    ? `${group.path}\n\n${group.description}`
+    : group.path;
   row.appendChild(el("span", "twisty", ICONS.chevron));
   row.appendChild(el("span", "icon", ICONS.folder));
   const labelEl = el("span", "label");
@@ -390,6 +396,16 @@ function renderProjectEntry(entry: ProjectEntry, label: string): HTMLElement {
   actions.appendChild(
     iconBtn(ICONS.plus, "New session here", () =>
       send({ type: "newSession", dir: group.path }),
+    ),
+  );
+  actions.appendChild(
+    iconBtn(ICONS.chat, "Chat about this project", () =>
+      send({ type: "chat", dir: group.path }),
+    ),
+  );
+  actions.appendChild(
+    iconBtn(ICONS.sparkle, "Generate project summary (LLM)", () =>
+      send({ type: "summarize", path: group.path, label: group.name }),
     ),
   );
   actions.appendChild(

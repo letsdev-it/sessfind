@@ -145,6 +145,12 @@ fn strip_markdown_fences(response: &str) -> &str {
 
 /// Invoke the LLM backend in headless mode with the given prompt.
 pub fn invoke(backend: &LlmBackend, prompt: &str) -> Result<String> {
+    invoke_with_budget(backend, prompt, 0.25)
+}
+
+/// Invoke with an explicit USD budget cap (applies to claude only; other
+/// backends have no budget flag).
+pub fn invoke_with_budget(backend: &LlmBackend, prompt: &str, budget_usd: f64) -> Result<String> {
     let mut cmd = std::process::Command::new(&backend.binary);
 
     for arg in &backend.headless_args {
@@ -159,7 +165,7 @@ pub fn invoke(backend: &LlmBackend, prompt: &str) -> Result<String> {
 
     match backend.name.as_str() {
         "claude" => {
-            cmd.arg("--max-budget-usd").arg("0.05");
+            cmd.arg("--max-budget-usd").arg(format!("{budget_usd}"));
         }
         "copilot" => {
             cmd.arg("--allow-all-tools");
@@ -170,8 +176,19 @@ pub fn invoke(backend: &LlmBackend, prompt: &str) -> Result<String> {
     let output = cmd.output()?;
 
     if !output.status.success() {
+        // Some tools (claude among them) print errors on stdout.
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("LLM invocation via {} failed: {stderr}", backend.name);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = if stderr.trim().is_empty() {
+            stdout
+        } else {
+            stderr
+        };
+        anyhow::bail!(
+            "LLM invocation via {} failed: {}",
+            backend.name,
+            detail.trim()
+        );
     }
 
     let stdout = String::from_utf8(output.stdout)?;

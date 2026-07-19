@@ -44,6 +44,9 @@ export type WebToExt =
       tags: string[];
     }
   | { type: "setViewMode"; mode: ViewMode }
+  | { type: "summarize"; path: string; label: string }
+  | { type: "chat"; dir: string }
+  | { type: "stats" }
   | { type: "refresh" }
   | { type: "index" };
 

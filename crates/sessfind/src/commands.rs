@@ -557,7 +557,9 @@ pub fn projects_summarize(
 
     eprintln!("Summarizing {dir} with {}…", backend.display());
     let prompt = build_summary_prompt(dir, &sessions, &samples);
-    let description = llm::invoke(backend, &prompt)?.trim().to_string();
+    let description = llm::invoke_with_budget(backend, &prompt, 0.50)?
+        .trim()
+        .to_string();
     if description.is_empty() {
         anyhow::bail!("LLM returned an empty summary");
     }

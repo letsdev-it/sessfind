@@ -69,6 +69,19 @@ sessfind tag rm-project ~/code/backend work
 sessfind tag list --json
 ```
 
+## Project summaries & chat
+
+```bash
+# Ask a detected LLM backend to describe the project from its sessions;
+# stored and exposed as ProjectGroup.description in projects list --json.
+sessfind projects summarize ~/code/backend --tool claude
+
+# Print (or emit as JSON CommandSpec) a command that opens an interactive
+# claude/opencode/codex session in the project root, pre-loaded with a brief:
+# description, tags, recent sessions with ids, and sessfind usage hints.
+sessfind projects chat ~/code/backend --tool claude
+```
+
 ## Rename a session
 
 ```bash
