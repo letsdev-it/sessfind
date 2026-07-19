@@ -230,6 +230,15 @@ fn tools_list_json_parses() {
 // ── Tags & user projects ──
 
 #[test]
+fn rename_unknown_session_fails() {
+    sessfind()
+        .args(["sessions", "rename", "definitely-not-a-real-session", "Name"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No indexed session"));
+}
+
+#[test]
 fn tag_add_unknown_session_fails() {
     sessfind()
         .args(["tag", "add", "definitely-not-a-real-session-id", "work"])

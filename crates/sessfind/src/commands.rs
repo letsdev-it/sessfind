@@ -27,6 +27,8 @@ const FEATURES: &[&str] = &[
     "tags",
     "user-projects",
     "tools-list",
+    "session-rename",
+    "project-tags",
 ];
 
 pub fn session_summary(r: &SearchResult) -> SessionSummary {
@@ -35,6 +37,7 @@ pub fn session_summary(r: &SearchResult) -> SessionSummary {
         source: r.source,
         project: r.project.clone(),
         title: r.title.clone(),
+        custom_name: None,
         timestamp: r.timestamp,
         snippet: r.snippet.clone(),
         tags: Vec::new(),
@@ -84,9 +87,16 @@ pub fn sessions_list(
         sessions.retain(|r| r.project.to_lowercase().contains(&needle));
     }
     if let Some(tag) = &opts.tag {
+        // Effective tagging: direct session tags plus tags on the whole dir.
         let ids: std::collections::HashSet<String> =
             store.sessions_with_tag(tag)?.into_iter().collect();
-        sessions.retain(|r| ids.contains(&r.session_id));
+        let project_tags = store.project_tags_map()?;
+        sessions.retain(|r| {
+            ids.contains(&r.session_id)
+                || project_tags
+                    .get(&r.project)
+                    .is_some_and(|tags| tags.contains(tag))
+        });
     }
     if let Some(name) = &opts.user_project {
         let project = store
@@ -106,14 +116,30 @@ pub fn sessions_list(
         sessions.truncate(limit);
     }
 
-    // Decorate with tags in one batch query.
+    // Decorate with tags (direct + inherited from dir) and custom names,
+    // each in one batch query.
     let ids: Vec<String> = sessions.iter().map(|r| r.session_id.clone()).collect();
     let mut tags_by_session = store.tags_for_sessions(&ids)?;
+    let mut names = store.names_for_sessions(&ids)?;
+    let project_tags = store.project_tags_map()?;
     let summaries: Vec<SessionSummary> = sessions
         .iter()
         .map(|r| {
             let mut summary = session_summary(r);
-            summary.tags = tags_by_session.remove(&r.session_id).unwrap_or_default();
+            let mut tags = tags_by_session.remove(&r.session_id).unwrap_or_default();
+            if let Some(inherited) = project_tags.get(&r.project) {
+                for tag in inherited {
+                    if !tags.contains(tag) {
+                        tags.push(tag.clone());
+                    }
+                }
+                tags.sort();
+            }
+            summary.tags = tags;
+            if let Some(name) = names.remove(&r.session_id) {
+                summary.title = Some(name.clone());
+                summary.custom_name = Some(name);
+            }
             summary
         })
         .collect();
@@ -144,8 +170,9 @@ pub fn sessions_list(
     Ok(())
 }
 
-pub fn projects_list(engine: &IndexEngine, json: bool) -> Result<()> {
+pub fn projects_list(engine: &IndexEngine, store: &MetadataStore, json: bool) -> Result<()> {
     let sessions = engine.list_sessions()?;
+    let project_tags = store.project_tags_map()?;
 
     let mut groups: HashMap<String, ProjectGroup> = HashMap::new();
     for s in &sessions {
@@ -157,6 +184,7 @@ pub fn projects_list(engine: &IndexEngine, json: bool) -> Result<()> {
                 session_count: 0,
                 last_activity: s.timestamp,
                 sources: Vec::new(),
+                tags: project_tags.get(&s.project).cloned().unwrap_or_default(),
             });
         group.session_count += 1;
         if s.timestamp > group.last_activity {
@@ -244,7 +272,12 @@ pub fn print_search_results(results: &[SearchResult], limit: usize, json: bool) 
     Ok(())
 }
 
-pub fn show(engine: &IndexEngine, session_id: &str, json: bool) -> Result<()> {
+pub fn show(
+    engine: &IndexEngine,
+    store: &MetadataStore,
+    session_id: &str,
+    json: bool,
+) -> Result<()> {
     let chunks = engine.get_session_chunks(session_id)?;
     if chunks.is_empty() {
         if json {
@@ -256,8 +289,26 @@ pub fn show(engine: &IndexEngine, session_id: &str, json: bool) -> Result<()> {
     }
 
     if json {
+        let mut summary = session_summary(&chunks[0]);
+        let mut tags = store.tags_for_session(session_id)?;
+        if let Some(inherited) = store.project_tags_map()?.get(&summary.project) {
+            for tag in inherited {
+                if !tags.contains(tag) {
+                    tags.push(tag.clone());
+                }
+            }
+            tags.sort();
+        }
+        summary.tags = tags;
+        if let Some(name) = store
+            .names_for_sessions(&[session_id.to_string()])?
+            .remove(session_id)
+        {
+            summary.title = Some(name.clone());
+            summary.custom_name = Some(name);
+        }
         let output = serde_json::json!({
-            "session": session_summary(&chunks[0]),
+            "session": summary,
             "chunks": chunks,
         });
         println!("{output}");
@@ -496,6 +547,54 @@ pub fn tag_list(store: &MetadataStore, json: bool) -> Result<()> {
     println!("\x1b[90m{}\x1b[0m", "-".repeat(40));
     for t in &tags {
         println!("{:<24} {}", t.tag, t.session_count);
+    }
+    Ok(())
+}
+
+pub fn tag_add_project(store: &MetadataStore, dir: &str, tags: &[String]) -> Result<()> {
+    for tag in tags {
+        store.add_project_tag(dir, tag)?;
+    }
+    println!("Tagged directory {dir} with: {}", tags.join(", "));
+    Ok(())
+}
+
+pub fn tag_rm_project(store: &MetadataStore, dir: &str, tags: &[String]) -> Result<()> {
+    let mut removed = Vec::new();
+    for tag in tags {
+        if store.remove_project_tag(dir, tag)? {
+            removed.push(tag.clone());
+        }
+    }
+    if removed.is_empty() {
+        println!("No matching tags on {dir}");
+    } else {
+        println!("Removed from {dir}: {}", removed.join(", "));
+    }
+    Ok(())
+}
+
+// ── Session rename ──
+
+pub fn session_rename(
+    engine: &IndexEngine,
+    store: &MetadataStore,
+    session_id: &str,
+    name: Option<&str>,
+) -> Result<()> {
+    match name {
+        Some(name) if !name.trim().is_empty() => {
+            ensure_session_exists(engine, session_id)?;
+            store.set_session_name(session_id, name.trim())?;
+            println!("Renamed {session_id} to: {}", name.trim());
+        }
+        _ => {
+            if store.clear_session_name(session_id)? {
+                println!("Cleared custom name of {session_id}");
+            } else {
+                println!("No custom name set for {session_id}");
+            }
+        }
     }
     Ok(())
 }

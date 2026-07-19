@@ -46,7 +46,19 @@ impl MetadataStore {
                 project_id INTEGER NOT NULL REFERENCES user_projects(id) ON DELETE CASCADE,
                 session_id TEXT NOT NULL,
                 PRIMARY KEY (project_id, session_id)
-            );",
+            );
+            CREATE TABLE IF NOT EXISTS session_names (
+                session_id TEXT PRIMARY KEY,
+                name       TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS project_tags (
+                project_dir TEXT NOT NULL,
+                tag         TEXT NOT NULL,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (project_dir, tag)
+            );
+            CREATE INDEX IF NOT EXISTS idx_project_tags_tag ON project_tags(tag);",
         )?;
         Ok(Self { conn })
     }
@@ -69,8 +81,6 @@ impl MetadataStore {
         Ok(n > 0)
     }
 
-    // Single-session lookup, used by the extension's session preview (PR4).
-    #[allow(dead_code)]
     pub fn tags_for_session(&self, session_id: &str) -> Result<Vec<String>> {
         let mut stmt = self
             .conn
@@ -132,6 +142,81 @@ impl MetadataStore {
             .query_map([tag], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(ids)
+    }
+
+    // ── Session names (user rename overrides) ──
+
+    pub fn set_session_name(&self, session_id: &str, name: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO session_names (session_id, name) VALUES (?1, ?2)",
+            (session_id, name),
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_session_name(&self, session_id: &str) -> Result<bool> {
+        let n = self.conn.execute(
+            "DELETE FROM session_names WHERE session_id = ?1",
+            [session_id],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Custom names for many sessions at once, keyed by session_id.
+    pub fn names_for_sessions(&self, session_ids: &[String]) -> Result<HashMap<String, String>> {
+        let mut map = HashMap::new();
+        if session_ids.is_empty() {
+            return Ok(map);
+        }
+        let placeholders = std::iter::repeat_n("?", session_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT session_id, name FROM session_names WHERE session_id IN ({placeholders})"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(session_ids.iter()), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (sid, name) = row?;
+            map.insert(sid, name);
+        }
+        Ok(map)
+    }
+
+    // ── Project (directory) tags ──
+
+    pub fn add_project_tag(&self, project_dir: &str, tag: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO project_tags (project_dir, tag) VALUES (?1, ?2)",
+            (project_dir, tag),
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_project_tag(&self, project_dir: &str, tag: &str) -> Result<bool> {
+        let n = self.conn.execute(
+            "DELETE FROM project_tags WHERE project_dir = ?1 AND tag = ?2",
+            (project_dir, tag),
+        )?;
+        Ok(n > 0)
+    }
+
+    /// All project-dir tags, keyed by directory.
+    pub fn project_tags_map(&self) -> Result<HashMap<String, Vec<String>>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT project_dir, tag FROM project_tags ORDER BY tag")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        for row in rows {
+            let (dir, tag) = row?;
+            map.entry(dir).or_default().push(tag);
+        }
+        Ok(map)
     }
 
     // ── User projects ──
@@ -406,6 +491,47 @@ mod tests {
     fn add_dir_to_missing_project_fails() {
         let (_d, s) = store();
         assert!(s.add_dir("nope", "/d").is_err());
+    }
+
+    #[test]
+    fn session_name_set_clear() {
+        let (_d, s) = store();
+        s.set_session_name("s1", "My great session").unwrap();
+        s.set_session_name("s1", "Renamed").unwrap(); // overwrite
+        s.set_session_name("s2", "Other").unwrap();
+
+        let names = s
+            .names_for_sessions(&["s1".into(), "s2".into(), "s3".into()])
+            .unwrap();
+        assert_eq!(names.get("s1").map(String::as_str), Some("Renamed"));
+        assert_eq!(names.get("s2").map(String::as_str), Some("Other"));
+        assert!(!names.contains_key("s3"));
+
+        assert!(s.clear_session_name("s1").unwrap());
+        assert!(!s.clear_session_name("s1").unwrap());
+        let names = s.names_for_sessions(&["s1".into()]).unwrap();
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn project_tags_add_remove_map() {
+        let (_d, s) = store();
+        s.add_project_tag("/p1", "work").unwrap();
+        s.add_project_tag("/p1", "rust").unwrap();
+        s.add_project_tag("/p1", "work").unwrap(); // idempotent
+        s.add_project_tag("/p2", "work").unwrap();
+
+        let map = s.project_tags_map().unwrap();
+        assert_eq!(
+            map.get("/p1").unwrap(),
+            &vec!["rust".to_string(), "work".to_string()]
+        );
+        assert_eq!(map.get("/p2").unwrap(), &vec!["work".to_string()]);
+
+        assert!(s.remove_project_tag("/p1", "rust").unwrap());
+        assert!(!s.remove_project_tag("/p1", "rust").unwrap());
+        let map = s.project_tags_map().unwrap();
+        assert_eq!(map.get("/p1").unwrap(), &vec!["work".to_string()]);
     }
 
     #[test]

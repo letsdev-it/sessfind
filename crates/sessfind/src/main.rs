@@ -169,6 +169,15 @@ enum SessionsAction {
         #[arg(long)]
         json: bool,
     },
+    /// Set or clear a custom display name for a session
+    Rename {
+        session_id: String,
+        /// The new name (omit together with --clear to remove the override)
+        name: Option<String>,
+        /// Remove the custom name
+        #[arg(long)]
+        clear: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -213,6 +222,18 @@ enum TagAction {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+    },
+    /// Tag a whole project directory (sessions in it inherit the tag)
+    AddProject {
+        dir: String,
+        #[arg(required = true)]
+        tags: Vec<String>,
+    },
+    /// Remove tags from a project directory
+    RmProject {
+        dir: String,
+        #[arg(required = true)]
+        tags: Vec<String>,
     },
 }
 
@@ -415,7 +436,8 @@ fn main() -> Result<()> {
         }
         Commands::Show { session_id, json } => {
             let engine = open_engine()?;
-            commands::show(&engine, &session_id, json)?;
+            let store = open_metadata()?;
+            commands::show(&engine, &store, &session_id, json)?;
         }
         Commands::DumpChunks => {
             let engine = open_engine()?;
@@ -432,44 +454,54 @@ fn main() -> Result<()> {
         Commands::Capabilities => {
             commands::capabilities()?;
         }
-        Commands::Sessions {
-            action:
-                SessionsAction::List {
-                    source,
-                    project,
-                    tag,
-                    user_project,
-                    limit,
-                    sort,
-                    json,
-                },
-        } => {
-            let sort = match sort.as_str() {
-                "time" => SortOrder::TimeDesc,
-                "score" => SortOrder::ScoreDesc,
-                other => anyhow::bail!("Invalid sort order: {other}. Expected time or score"),
-            };
-            let engine = open_engine()?;
-            let store = open_metadata()?;
-            commands::sessions_list(
-                &engine,
-                &store,
-                &commands::SessionListOpts {
-                    source,
-                    project,
-                    tag,
-                    user_project,
-                    limit,
-                    sort,
-                    json,
-                },
-            )?;
-        }
+        Commands::Sessions { action } => match action {
+            SessionsAction::List {
+                source,
+                project,
+                tag,
+                user_project,
+                limit,
+                sort,
+                json,
+            } => {
+                let sort = match sort.as_str() {
+                    "time" => SortOrder::TimeDesc,
+                    "score" => SortOrder::ScoreDesc,
+                    other => anyhow::bail!("Invalid sort order: {other}. Expected time or score"),
+                };
+                let engine = open_engine()?;
+                let store = open_metadata()?;
+                commands::sessions_list(
+                    &engine,
+                    &store,
+                    &commands::SessionListOpts {
+                        source,
+                        project,
+                        tag,
+                        user_project,
+                        limit,
+                        sort,
+                        json,
+                    },
+                )?;
+            }
+            SessionsAction::Rename {
+                session_id,
+                name,
+                clear,
+            } => {
+                let engine = open_engine()?;
+                let store = open_metadata()?;
+                let name = if clear { None } else { name };
+                commands::session_rename(&engine, &store, &session_id, name.as_deref())?;
+            }
+        },
         Commands::Projects {
             action: ProjectsAction::List { json },
         } => {
             let engine = open_engine()?;
-            commands::projects_list(&engine, json)?;
+            let store = open_metadata()?;
+            commands::projects_list(&engine, &store, json)?;
         }
         Commands::Tools {
             action: ToolsAction::List { dir, json },
@@ -488,6 +520,12 @@ fn main() -> Result<()> {
                 }
                 TagAction::List { json } => {
                     commands::tag_list(&store, json)?;
+                }
+                TagAction::AddProject { dir, tags } => {
+                    commands::tag_add_project(&store, &dir, &tags)?;
+                }
+                TagAction::RmProject { dir, tags } => {
+                    commands::tag_rm_project(&store, &dir, &tags)?;
                 }
             }
         }

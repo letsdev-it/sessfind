@@ -137,7 +137,11 @@ pub struct SessionSummary {
     pub source: Source,
     /// Absolute directory path the session ran in (drives grouping and resume cwd).
     pub project: String,
+    /// Display title: the user's custom name when set, else the tool's title.
     pub title: Option<String>,
+    /// User-assigned name override, when one exists (also reflected in `title`).
+    #[serde(default)]
+    pub custom_name: Option<String>,
     pub timestamp: DateTime<Utc>,
     pub snippet: String,
     #[serde(default)]
@@ -155,6 +159,9 @@ pub struct ProjectGroup {
     pub session_count: usize,
     pub last_activity: DateTime<Utc>,
     pub sources: Vec<Source>,
+    /// Tags attached to the whole directory (inherited by its sessions).
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// A user-defined project: a root directory (where new sessions launch),
@@ -374,6 +381,7 @@ mod tests {
             source: Source::ClaudeCode,
             project: "/home/user/project".into(),
             title: Some("Test".into()),
+            custom_name: None,
             timestamp: Utc::now(),
             snippet: "USER: hello".into(),
             tags: vec!["work".into()],
@@ -398,6 +406,7 @@ mod tests {
         }"#;
         let back: SessionSummary = serde_json::from_str(json).unwrap();
         assert!(back.tags.is_empty());
+        assert!(back.custom_name.is_none());
     }
 
     #[test]
