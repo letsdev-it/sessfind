@@ -29,11 +29,14 @@ code --install-extension sessfind-*.vsix
 
 ## What you get
 
-- **Projects** — sessions auto-grouped by their directory.
-- **My Projects** — user-defined projects (root dir + extra dirs + pinned
-  sessions). Create them, add/remove directories, and pin sessions from the
-  UI; directories are visible as child nodes.
-- **Tags** — organise sessions with your own tags.
+- **Projects** — sessions auto-grouped by their directory, shown as a flat
+  list or as the directory tree (toggle in the view title; tree mode
+  disambiguates same-named projects in different locations).
+- **Tags** — organise sessions with your own tags. Tags apply to individual
+  sessions or to whole project directories (sessions inherit them); a tag
+  node lists tagged projects first, then individually tagged sessions.
+- **Rename** — give any session a custom name; it shows in the trees, in
+  search, and as the preview tab title.
 - **Project details** — open a project overview page with metadata and
   data-derived metrics: session counts per source, first/last activity, active
   days, top tags, and recent sessions.

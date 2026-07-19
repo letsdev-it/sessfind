@@ -57,10 +57,23 @@ sessfind projects list --json         # auto-grouped by directory
 
 ## Tags
 
+Tags attach to individual sessions or to whole project directories — sessions
+inherit their directory's tags, and `sessions list --tag` matches the
+effective set.
+
 ```bash
 sessfind tag add SESSION_ID work rust
 sessfind tag rm SESSION_ID rust
+sessfind tag add-project ~/code/backend work    # whole directory
+sessfind tag rm-project ~/code/backend work
 sessfind tag list --json
+```
+
+## Rename a session
+
+```bash
+sessfind sessions rename SESSION_ID "Payments refactor"
+sessfind sessions rename SESSION_ID --clear     # back to the original title
 ```
 
 ## User projects
