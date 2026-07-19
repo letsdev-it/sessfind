@@ -27,6 +27,11 @@
     "views": {
       "sessfind": [
         {
+          "id": "sessfind.searchBox",
+          "type": "webview",
+          "name": "Search"
+        },
+        {
           "id": "sessfind.autoProjects",
           "name": "Projects"
         },
@@ -151,13 +156,8 @@
           "group": "navigation@0"
         },
         {
-          "command": "sessfind.setFilter",
-          "when": "view =~ /^sessfind\\./ && !sessfind.filterActive",
-          "group": "navigation@1"
-        },
-        {
           "command": "sessfind.clearFilter",
-          "when": "view =~ /^sessfind\\./ && sessfind.filterActive",
+          "when": "view == sessfind.searchBox && sessfind.filterActive",
           "group": "navigation@1"
         },
         {

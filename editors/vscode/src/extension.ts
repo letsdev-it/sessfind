@@ -25,6 +25,7 @@ import {
   SessionItem,
   UserProjectItem,
 } from "./views/items";
+import { SearchBoxViewProvider } from "./views/searchBoxView";
 import { TagsTreeProvider } from "./views/tagsTree";
 import { UserProjectsTreeProvider } from "./views/userProjectsTree";
 
@@ -87,6 +88,39 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     tags.refresh();
   };
 
+  // Queries from the search box: filter by substrings immediately, then
+  // refine with engine full-content matches. A sequence counter drops results
+  // of superseded queries (the user kept typing).
+  let filterSeq = 0;
+  const applyQuery = async (raw: string) => {
+    const query = raw.trim();
+    const seq = ++filterSeq;
+    if (query.length === 0) {
+      await setFilter(undefined);
+      return;
+    }
+    await setFilter({ query, engineIds: new Set() });
+    try {
+      const results = await client.search(query, "fts", 500);
+      if (seq === filterSeq) {
+        await setFilter({
+          query,
+          engineIds: new Set(results.map((r) => r.session_id)),
+        });
+      }
+    } catch {
+      // Bad query syntax or engine failure — substring filtering stays active.
+    }
+  };
+
+  const searchBox = new SearchBoxViewProvider((q) => void applyQuery(q));
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      SearchBoxViewProvider.viewId,
+      searchBox,
+    ),
+  );
+
   context.subscriptions.push(...registerManageCommands(client, refreshAll));
 
   context.subscriptions.push(
@@ -94,36 +128,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     vscode.commands.registerCommand("sessfind.refresh", refreshAll),
 
-    vscode.commands.registerCommand("sessfind.setFilter", async () => {
-      const query = await vscode.window.showInputBox({
-        prompt: "Filter sessions (matches content, title, path and tags)",
-        value: activeFilter?.query ?? "",
-        placeHolder: "e.g. auth, my-repo, deploy",
-      });
-      if (query === undefined) {
-        return; // cancelled
-      }
-      const trimmed = query.trim();
-      if (trimmed.length === 0) {
-        await setFilter(undefined);
-        return;
-      }
-      // Ask the engine which sessions match, so filtering searches full
-      // content — and union with local substring matching in the providers.
-      let engineIds = new Set<string>();
-      try {
-        const results = await client.search(trimmed, "fts", 500);
-        engineIds = new Set(results.map((r) => r.session_id));
-      } catch {
-        // Engine search failing (e.g. bad query syntax) still leaves
-        // substring filtering working.
-      }
-      await setFilter({ query: trimmed, engineIds });
+    vscode.commands.registerCommand("sessfind.setFilter", () => {
+      searchBox.focus();
     }),
 
-    vscode.commands.registerCommand("sessfind.clearFilter", () =>
-      setFilter(undefined),
-    ),
+    vscode.commands.registerCommand("sessfind.clearFilter", async () => {
+      searchBox.setValue("");
+      await applyQuery("");
+    }),
 
     vscode.commands.registerCommand("sessfind.indexNow", async () => {
       await vscode.window.withProgress(
