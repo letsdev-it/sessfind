@@ -31,14 +31,22 @@ code --install-extension sessfind-*.vsix
 
 - **Projects** — sessions auto-grouped by their directory.
 - **My Projects** — user-defined projects (root dir + extra dirs + pinned
-  sessions). Create them, add directories, and pin sessions from the UI.
+  sessions). Create them, add/remove directories, and pin sessions from the
+  UI; directories are visible as child nodes.
 - **Tags** — organise sessions with your own tags.
+- **Project details** — open a project overview page with metadata and
+  data-derived metrics: session counts per source, first/last activity, active
+  days, top tags, and recent sessions.
+- **Filter** — a filter across all three views: type a query and only matching
+  sessions (full-content search plus title/path/tag substrings) stay visible;
+  project and tag counts are recomputed from the matches.
 - **Search Sessions** — full-text, fuzzy, semantic and LLM search from a
   QuickPick. Only the methods your binary reports are offered; instant methods
   search as you type, semantic/LLM run on Enter.
 - **Session preview** — open any session as a rendered Markdown conversation.
-- **Resume / new session** — launch the right tool in an integrated terminal,
-  in the session's project directory.
+- **Resume / new session** — resume in an integrated terminal in the session's
+  project directory; starting a new session asks which installed tool to use
+  (claude, opencode, copilot, cursor, codex — whatever is on your PATH).
 
 ## Settings
 

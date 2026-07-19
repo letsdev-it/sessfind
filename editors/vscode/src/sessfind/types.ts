@@ -46,6 +46,11 @@ export interface TagCount {
   session_count: number;
 }
 
+export interface ToolInfo {
+  name: string;
+  new_session: CommandSpec;
+}
+
 export interface SearchMethods {
   fts: boolean;
   fuzzy: boolean;

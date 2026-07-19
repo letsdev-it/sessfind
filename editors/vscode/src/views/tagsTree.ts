@@ -1,11 +1,14 @@
 import * as vscode from "vscode";
 import type { SessfindClient } from "../sessfind/client";
-import type { SessionSummary } from "../sessfind/types";
+import type { TagCount } from "../sessfind/types";
+import { applyFilter, type SessionFilter } from "../state/filter";
+import { countTags } from "./grouping";
 import { MessageItem, SessionItem, TagItem } from "./items";
 
 /**
  * "Tags" view: one node per tag, expanding to the sessions carrying it.
- * Sessions are filtered client-side from the cached session list.
+ * With an active filter, tags and counts are recomputed from the matching
+ * sessions only.
  */
 export class TagsTreeProvider
   implements vscode.TreeDataProvider<vscode.TreeItem>
@@ -13,7 +16,10 @@ export class TagsTreeProvider
   private readonly emitter = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.emitter.event;
 
-  constructor(private readonly client: SessfindClient) {}
+  constructor(
+    private readonly client: SessfindClient,
+    private readonly getFilter: () => SessionFilter | undefined,
+  ) {}
 
   refresh(): void {
     this.emitter.fire();
@@ -24,17 +30,29 @@ export class TagsTreeProvider
   }
 
   async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
+    const filter = this.getFilter();
     if (!element) {
-      const tags = await this.client.tags();
+      let tags: TagCount[];
+      if (filter) {
+        tags = countTags(applyFilter(await this.client.sessions(), filter));
+      } else {
+        tags = await this.client.tags();
+      }
       if (tags.length === 0) {
-        return [new MessageItem("No tags yet. Tag a session to see it here.")];
+        return [
+          new MessageItem(
+            filter
+              ? `No tagged sessions match “${filter.query}”.`
+              : "No tags yet. Tag a session to see it here.",
+          ),
+        ];
       }
       return tags.map((t) => new TagItem(t.tag, t.session_count));
     }
     if (element instanceof TagItem) {
-      const sessions = await this.client.sessions();
+      const sessions = applyFilter(await this.client.sessions(), filter);
       return sessions
-        .filter((s: SessionSummary) => s.tags.includes(element.tag))
+        .filter((s) => s.tags.includes(element.tag))
         .map((s) => new SessionItem(s));
     }
     return [];

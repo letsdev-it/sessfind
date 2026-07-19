@@ -1,7 +1,12 @@
 import * as vscode from "vscode";
 import { registerManageCommands } from "./commands/manage";
+import { startNewSession } from "./commands/newSession";
 import { runSearch } from "./commands/search";
 import { runCommandSpec } from "./commands/terminal";
+import {
+  PROJECT_SCHEME,
+  ProjectDocumentProvider,
+} from "./preview/projectDocumentProvider";
 import {
   SESSION_SCHEME,
   SessionDocumentProvider,
@@ -12,31 +17,71 @@ import {
   SessfindError,
 } from "./sessfind/client";
 import { SUPPORTED_JSON_API_VERSION, type Capabilities } from "./sessfind/types";
+import type { SessionFilter } from "./state/filter";
 import { AutoProjectsTreeProvider } from "./views/autoProjectsTree";
-import { SessionItem } from "./views/items";
+import {
+  ProjectDirItem,
+  ProjectGroupItem,
+  SessionItem,
+  UserProjectItem,
+} from "./views/items";
 import { TagsTreeProvider } from "./views/tagsTree";
 import { UserProjectsTreeProvider } from "./views/userProjectsTree";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const client = new SessfindClient();
 
-  const autoProjects = new AutoProjectsTreeProvider(client);
-  const userProjects = new UserProjectsTreeProvider(client);
-  const tags = new TagsTreeProvider(client);
+  let activeFilter: SessionFilter | undefined;
+  const getFilter = () => activeFilter;
+
+  const autoProjects = new AutoProjectsTreeProvider(client, getFilter);
+  const userProjects = new UserProjectsTreeProvider(client, getFilter);
+  const tags = new TagsTreeProvider(client, getFilter);
   const previewProvider = new SessionDocumentProvider(client);
+  const projectPreviewProvider = new ProjectDocumentProvider(client);
+
+  const autoView = vscode.window.createTreeView("sessfind.autoProjects", {
+    treeDataProvider: autoProjects,
+  });
+  const userView = vscode.window.createTreeView("sessfind.userProjects", {
+    treeDataProvider: userProjects,
+  });
+  const tagsView = vscode.window.createTreeView("sessfind.tags", {
+    treeDataProvider: tags,
+  });
 
   context.subscriptions.push(
-    vscode.window.registerTreeDataProvider("sessfind.autoProjects", autoProjects),
-    vscode.window.registerTreeDataProvider("sessfind.userProjects", userProjects),
-    vscode.window.registerTreeDataProvider("sessfind.tags", tags),
+    autoView,
+    userView,
+    tagsView,
     vscode.workspace.registerTextDocumentContentProvider(
       SESSION_SCHEME,
       previewProvider,
+    ),
+    vscode.workspace.registerTextDocumentContentProvider(
+      PROJECT_SCHEME,
+      projectPreviewProvider,
     ),
   );
 
   const refreshAll = () => {
     client.invalidate();
+    autoProjects.refresh();
+    userProjects.refresh();
+    tags.refresh();
+  };
+
+  const setFilter = async (filter: SessionFilter | undefined) => {
+    activeFilter = filter;
+    const badge = filter ? `filter: “${filter.query}”` : undefined;
+    autoView.description = badge;
+    userView.description = badge;
+    tagsView.description = badge;
+    await vscode.commands.executeCommand(
+      "setContext",
+      "sessfind.filterActive",
+      filter !== undefined,
+    );
     autoProjects.refresh();
     userProjects.refresh();
     tags.refresh();
@@ -48,6 +93,37 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("sessfind.search", () => runSearch(client)),
 
     vscode.commands.registerCommand("sessfind.refresh", refreshAll),
+
+    vscode.commands.registerCommand("sessfind.setFilter", async () => {
+      const query = await vscode.window.showInputBox({
+        prompt: "Filter sessions (matches content, title, path and tags)",
+        value: activeFilter?.query ?? "",
+        placeHolder: "e.g. auth, my-repo, deploy",
+      });
+      if (query === undefined) {
+        return; // cancelled
+      }
+      const trimmed = query.trim();
+      if (trimmed.length === 0) {
+        await setFilter(undefined);
+        return;
+      }
+      // Ask the engine which sessions match, so filtering searches full
+      // content — and union with local substring matching in the providers.
+      let engineIds = new Set<string>();
+      try {
+        const results = await client.search(trimmed, "fts", 500);
+        engineIds = new Set(results.map((r) => r.session_id));
+      } catch {
+        // Engine search failing (e.g. bad query syntax) still leaves
+        // substring filtering working.
+      }
+      await setFilter({ query: trimmed, engineIds });
+    }),
+
+    vscode.commands.registerCommand("sessfind.clearFilter", () =>
+      setFilter(undefined),
+    ),
 
     vscode.commands.registerCommand("sessfind.indexNow", async () => {
       await vscode.window.withProgress(
@@ -71,11 +147,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         if (!id) {
           return;
         }
-        const uri = SessionDocumentProvider.uriFor(id);
-        const doc = await vscode.workspace.openTextDocument(uri);
-        await vscode.languages.setTextDocumentLanguage(doc, "markdown");
-        await vscode.window.showTextDocument(doc, { preview: true });
-        await vscode.commands.executeCommand("markdown.showPreview", uri);
+        await openMarkdownPreview(SessionDocumentProvider.uriFor(id));
+      },
+    ),
+
+    vscode.commands.registerCommand(
+      "sessfind.openProjectDetails",
+      async (item?: ProjectGroupItem | UserProjectItem) => {
+        if (item instanceof ProjectGroupItem) {
+          await openMarkdownPreview(
+            ProjectDocumentProvider.uriForAuto(item.group.path),
+          );
+        } else if (item instanceof UserProjectItem) {
+          await openMarkdownPreview(
+            ProjectDocumentProvider.uriForUser(item.project.name),
+          );
+        }
       },
     ),
 
@@ -105,7 +192,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           return;
         }
         try {
-          await runCommandSpec(session.new_session, `new: ${session.project}`);
+          await startNewSession(client, session.project, session.new_session);
+        } catch (err) {
+          reportError(err);
+        }
+      },
+    ),
+
+    vscode.commands.registerCommand(
+      "sessfind.newSessionInProject",
+      async (item?: ProjectGroupItem | UserProjectItem) => {
+        const dir =
+          item instanceof ProjectGroupItem
+            ? item.group.path
+            : item instanceof UserProjectItem
+              ? item.project.root_dir
+              : undefined;
+        if (!dir) {
+          return;
+        }
+        try {
+          await startNewSession(client, dir);
+        } catch (err) {
+          reportError(err);
+        }
+      },
+    ),
+
+    vscode.commands.registerCommand(
+      "sessfind.removeDirFromProject",
+      async (item?: ProjectDirItem) => {
+        if (!item || item.isRoot) {
+          return;
+        }
+        try {
+          await client.projectRemoveDir(item.projectName, item.dir);
+          refreshAll();
         } catch (err) {
           reportError(err);
         }
@@ -119,6 +241,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 export function deactivate(): void {
   // Nothing to clean up; terminals and disposables are owned by VS Code.
+}
+
+async function openMarkdownPreview(uri: vscode.Uri): Promise<void> {
+  const doc = await vscode.workspace.openTextDocument(uri);
+  await vscode.languages.setTextDocumentLanguage(doc, "markdown");
+  await vscode.window.showTextDocument(doc, { preview: true });
+  await vscode.commands.executeCommand("markdown.showPreview", uri);
 }
 
 async function checkCompatibility(

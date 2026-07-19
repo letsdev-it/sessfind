@@ -8,6 +8,7 @@ import type {
   SessionDetail,
   SessionSummary,
   TagCount,
+  ToolInfo,
   UserProject,
 } from "./types";
 
@@ -34,6 +35,7 @@ export class SessfindError extends Error {
  */
 export class SessfindClient {
   private sessionCache: Promise<SessionSummary[]> | undefined;
+  private capsCache: Promise<Capabilities> | undefined;
 
   private binaryPath(): string {
     return (
@@ -87,7 +89,14 @@ export class SessfindClient {
   }
 
   capabilities(): Promise<Capabilities> {
-    return this.runJson<Capabilities>(["capabilities"]);
+    if (!this.capsCache) {
+      this.capsCache = this.runJson<Capabilities>(["capabilities"]);
+    }
+    return this.capsCache;
+  }
+
+  toolsList(dir: string): Promise<ToolInfo[]> {
+    return this.runJson<ToolInfo[]>(["tools", "list", "--dir", dir, "--json"]);
   }
 
   async sessions(force = false): Promise<SessionSummary[]> {
@@ -160,6 +169,11 @@ export class SessfindClient {
     this.invalidate();
   }
 
+  async projectRemoveDir(name: string, dir: string): Promise<void> {
+    await this.run(["project", "rm-dir", name, dir]);
+    this.invalidate();
+  }
+
   async projectPin(name: string, sessionId: string): Promise<void> {
     await this.run(["project", "add-session", name, sessionId]);
     this.invalidate();
@@ -173,5 +187,6 @@ export class SessfindClient {
   /** Drop cached data; call after a mutation or explicit refresh. */
   invalidate(): void {
     this.sessionCache = undefined;
+    this.capsCache = undefined;
   }
 }

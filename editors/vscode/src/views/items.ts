@@ -58,6 +58,21 @@ export class TagItem extends vscode.TreeItem {
   }
 }
 
+/** A directory belonging to a user project (root or extra). */
+export class ProjectDirItem extends vscode.TreeItem {
+  constructor(
+    readonly projectName: string,
+    readonly dir: string,
+    readonly isRoot: boolean,
+  ) {
+    super(dir, vscode.TreeItemCollapsibleState.None);
+    this.id = `dir:${projectName}:${dir}`;
+    this.description = isRoot ? "root" : undefined;
+    this.contextValue = isRoot ? "projectDirRoot" : "projectDirExtra";
+    this.iconPath = new vscode.ThemeIcon(isRoot ? "root-folder" : "folder");
+  }
+}
+
 /** Leaf shown when a collection is empty. */
 export class MessageItem extends vscode.TreeItem {
   constructor(message: string) {
