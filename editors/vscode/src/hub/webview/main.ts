@@ -1,6 +1,6 @@
 // Webview script for the sessfind hub. Renders the full sidebar (search,
-// projects, tags) from state pushed by the extension, and sends user intents
-// back. Rendering is plain DOM — the lists are moderate (hundreds of rows).
+// results, recent, projects, tags) from state pushed by the extension, and
+// sends user intents back. Rendering is plain DOM — moderate row counts.
 
 import "./hub.css";
 import {
@@ -8,9 +8,12 @@ import {
   type HubModel,
   type ProjectEntry,
   type ProjectNode,
+  type ResultEntry,
 } from "../model";
+import { condenseSnippet, highlightSegments } from "../highlight";
 import type { ExtToWeb, HubState, WebToExt } from "../protocol";
 import type { SearchMethod, SessionSummary } from "../../sessfind/types";
+import { closeMenu, openMenu, type MenuAction } from "./contextMenu";
 
 declare function acquireVsCodeApi(): {
   postMessage(msg: WebToExt): void;
@@ -32,8 +35,12 @@ const LABELS: Record<SearchMethod, string> = {
 
 let state: HubState | null = null;
 let method: SearchMethod = vscode.getState()?.method ?? "fts";
-let expanded = new Set<string>(vscode.getState()?.expanded ?? []);
+const expanded = new Set<string>(vscode.getState()?.expanded ?? []);
 let debounce: ReturnType<typeof setTimeout> | undefined;
+
+// Keyboard navigation: navigable rows collected each render, plus active index.
+let navRows: HTMLElement[] = [];
+let activeIndex = -1;
 
 function persist(): void {
   vscode.setState({ method, expanded: [...expanded] });
@@ -56,6 +63,7 @@ const ICONS = {
   tag: svg('<path d="M8.6 2.2H13.8V7.4L7.4 13.8 2.2 8.6z"/><circle cx="10.8" cy="5.2" r="0.9" fill="currentColor" stroke="none"/>'),
   untag: svg('<path d="M8.6 2.2H13.8V7.4L7.4 13.8 2.2 8.6z"/><line x1="5" y1="9" x2="9" y2="13"/>'),
   info: svg('<circle cx="8" cy="8" r="5.7"/><line x1="8" y1="7.2" x2="8" y2="11"/><circle cx="8" cy="5" r="0.7" fill="currentColor" stroke="none"/>'),
+  open: svg('<path d="M9 2.5h4.5V7"/><line x1="13.5" y1="2.5" x2="7.5" y2="8.5"/><path d="M11 9v3.5H3.5V5H7"/>'),
   chevron: svg('<path d="M6 3.5 10.5 8 6 12.5"/>'),
   folder: svg('<path d="M1.8 4.2c0-.6.4-1 1-1h3.4l1.4 1.6h5.6c.6 0 1 .4 1 1v6c0 .6-.4 1-1 1H2.8c-.6 0-1-.4-1-1z"/>'),
   listTree: svg('<line x1="3" y1="4" x2="7" y2="4"/><line x1="6" y1="8" x2="10" y2="8"/><line x1="9" y1="12" x2="13" y2="12"/>'),
@@ -65,15 +73,12 @@ const ICONS = {
   sparkle: svg('<path d="M8 2l1.2 3.6L13 7l-3.8 1.4L8 12l-1.2-3.6L3 7l3.8-1.4z"/><path d="M12.8 11l.5 1.5 1.5.5-1.5.5-.5 1.5-.5-1.5-1.5-.5 1.5-.5z"/>'),
   chat: svg('<path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/>'),
   chart: svg('<line x1="3" y1="13" x2="13" y2="13"/><line x1="4.5" y1="13" x2="4.5" y2="8"/><line x1="8" y1="13" x2="8" y2="4"/><line x1="11.5" y1="13" x2="11.5" y2="10"/>'),
+  clock: svg('<circle cx="8" cy="8" r="5.7"/><path d="M8 5v3.2l2 1.3"/>'),
 };
 
 // ── DOM helpers ──
 
-function el(
-  tag: string,
-  className?: string,
-  html?: string,
-): HTMLElement {
+function el(tag: string, className?: string, html?: string): HTMLElement {
   const node = document.createElement(tag);
   if (className) {
     node.className = className;
@@ -118,6 +123,163 @@ function relTime(iso: string): string {
   return new Date(iso).toISOString().slice(0, 10);
 }
 
+/** Append highlighted text (query terms wrapped in <mark>) safely. */
+function appendHighlighted(
+  parent: HTMLElement,
+  text: string,
+  query: string,
+): void {
+  for (const seg of highlightSegments(text, query)) {
+    if (seg.mark) {
+      const mark = document.createElement("mark");
+      mark.textContent = seg.text;
+      parent.appendChild(mark);
+    } else {
+      parent.appendChild(document.createTextNode(seg.text));
+    }
+  }
+}
+
+// ── Shared action definitions (hover buttons + context menu) ──
+
+function sessionActions(session: SessionSummary): MenuAction[] {
+  const actions: MenuAction[] = [
+    {
+      label: "Resume in terminal",
+      icon: ICONS.play,
+      run: () => send({ type: "resume", sessionId: session.session_id }),
+    },
+    {
+      label: "Open conversation",
+      icon: ICONS.open,
+      run: () =>
+        send({
+          type: "open",
+          sessionId: session.session_id,
+          title: session.title,
+        }),
+    },
+    {
+      label: "New session in project",
+      icon: ICONS.plus,
+      run: () =>
+        send({
+          type: "newSession",
+          dir: session.project,
+          sessionId: session.session_id,
+        }),
+    },
+    {
+      label: "Rename…",
+      icon: ICONS.edit,
+      run: () => send({ type: "rename", sessionId: session.session_id }),
+    },
+    {
+      label: "Add tag…",
+      icon: ICONS.tag,
+      run: () =>
+        send({
+          type: "addTag",
+          kind: "session",
+          id: session.session_id,
+          label: session.title ?? session.session_id,
+        }),
+    },
+  ];
+  if (session.tags.length > 0) {
+    actions.push({
+      label: "Remove tag…",
+      icon: ICONS.untag,
+      run: () =>
+        send({
+          type: "removeTag",
+          kind: "session",
+          id: session.session_id,
+          label: session.title ?? session.session_id,
+          tags: session.tags,
+        }),
+    });
+  }
+  return actions;
+}
+
+function projectActions(group: ProjectEntry["group"]): MenuAction[] {
+  const actions: MenuAction[] = [
+    {
+      label: "New session here",
+      icon: ICONS.plus,
+      run: () => send({ type: "newSession", dir: group.path }),
+    },
+    {
+      label: "Chat about this project",
+      icon: ICONS.chat,
+      run: () => send({ type: "chat", dir: group.path }),
+    },
+    {
+      label: "Generate summary (LLM)",
+      icon: ICONS.sparkle,
+      run: () =>
+        send({ type: "summarize", path: group.path, label: group.name }),
+    },
+    {
+      label: "Project details",
+      icon: ICONS.info,
+      run: () => send({ type: "openProject", path: group.path }),
+    },
+    {
+      label: "Add tag…",
+      icon: ICONS.tag,
+      run: () =>
+        send({
+          type: "addTag",
+          kind: "project",
+          id: group.path,
+          label: group.name,
+        }),
+    },
+  ];
+  if ((group.tags ?? []).length > 0) {
+    actions.push({
+      label: "Remove tag…",
+      icon: ICONS.untag,
+      run: () =>
+        send({
+          type: "removeTag",
+          kind: "project",
+          id: group.path,
+          label: group.name,
+          tags: group.tags ?? [],
+        }),
+    });
+  }
+  return actions;
+}
+
+/** Render the first N actions as inline hover buttons. */
+function hoverButtons(actions: MenuAction[], limit: number): HTMLElement {
+  const span = el("span", "actions");
+  for (const a of actions.slice(0, limit)) {
+    span.appendChild(iconBtn(a.icon ?? "", a.label, () => a.run()));
+  }
+  return span;
+}
+
+function attachContextMenu(row: HTMLElement, actions: MenuAction[]): void {
+  row.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openMenu(e.clientX, e.clientY, actions);
+  });
+}
+
+/** Register a row for keyboard navigation and set its primary activation. */
+function makeNavigable(row: HTMLElement, activate: () => void): void {
+  row.dataset.nav = "1";
+  row.tabIndex = -1;
+  (row as HTMLElement & { _activate?: () => void })._activate = activate;
+  row.addEventListener("mouseenter", () => setActive(navRows.indexOf(row)));
+}
+
 // ── Rendering ──
 
 const root = document.getElementById("root") as HTMLElement;
@@ -134,12 +296,15 @@ function sendQuery(value: string): void {
 function render(): void {
   const focusHadSearch = document.activeElement === searchInput;
   const inputValue = searchInput?.value ?? "";
+  closeMenu();
   root.textContent = "";
+  navRows = [];
+  activeIndex = -1;
 
   root.appendChild(renderSearch(inputValue));
 
   if (!state) {
-    root.appendChild(el("div", "empty", "Loading…"));
+    root.appendChild(renderSkeleton());
     return;
   }
   if (state.error) {
@@ -148,12 +313,30 @@ function render(): void {
   }
 
   const model = buildModel(state);
+  if (model.query.length > 0) {
+    root.appendChild(renderResultsSection(model));
+  } else if (model.recent.length > 0) {
+    root.appendChild(renderRecentSection(model));
+  }
   root.appendChild(renderProjectsSection(model));
   root.appendChild(renderTagsSection(model));
+
+  // Re-collect navigable rows in document order.
+  navRows = [...root.querySelectorAll<HTMLElement>('[data-nav="1"]')];
 
   if (focusHadSearch) {
     searchInput?.focus();
   }
+}
+
+function renderSkeleton(): HTMLElement {
+  const wrap = el("div", "skeleton");
+  for (let i = 0; i < 6; i++) {
+    const line = el("div", "skel-row");
+    line.style.width = `${55 + ((i * 13) % 40)}%`;
+    wrap.appendChild(line);
+  }
+  return wrap;
 }
 
 function renderSearch(value: string): HTMLElement {
@@ -184,6 +367,9 @@ function renderSearch(value: string): HTMLElement {
     } else if (e.key === "Enter") {
       clearTimeout(debounce);
       sendQuery(input.value);
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      focusList(0);
     }
   });
   box.appendChild(input);
@@ -244,42 +430,126 @@ function renderStatus(): void {
   } else if (state?.filter && state.filter.query.length > 0) {
     const model = state ? buildModel(state) : null;
     node.textContent = model
-      ? `${model.visibleSessions} of ${model.totalSessions} sessions`
+      ? `${model.results.length} result${model.results.length === 1 ? "" : "s"}`
       : "";
   } else {
     node.textContent = "";
   }
 }
 
+interface SectionOpts {
+  defaultOpen?: boolean;
+  tools?: HTMLElement[];
+}
+
 function sectionHeader(
   title: string,
   count: string,
-  tools: HTMLElement[],
+  opts: SectionOpts = {},
 ): { header: HTMLElement; isOpen: () => boolean } {
   const key = `section:${title}`;
-  const open = () => !expanded.has(`${key}:closed`);
+  const defaultOpen = opts.defaultOpen ?? true;
+  const open = () =>
+    defaultOpen ? !expanded.has(`${key}:closed`) : expanded.has(`${key}:open`);
   const header = el("div", "section-header");
   const twisty = el("span", "twisty", ICONS.chevron);
   twisty.style.transform = open() ? "rotate(90deg)" : "";
   header.appendChild(twisty);
-  header.appendChild(el("span", undefined, title));
-  header.appendChild(el("span", "count", count));
+  header.appendChild(el("span", "section-title", title));
+  if (count) {
+    header.appendChild(el("span", "count", count));
+  }
   header.appendChild(el("span", "spacer"));
   const toolbox = el("span", "tools");
-  for (const t of tools) {
+  for (const t of opts.tools ?? []) {
     toolbox.appendChild(t);
   }
   header.appendChild(toolbox);
   header.addEventListener("click", () => {
-    if (open()) {
-      expanded.add(`${key}:closed`);
+    const openKey = defaultOpen ? `${key}:closed` : `${key}:open`;
+    if (expanded.has(openKey)) {
+      expanded.delete(openKey);
     } else {
-      expanded.delete(`${key}:closed`);
+      expanded.add(openKey);
     }
     persist();
     render();
   });
   return { header, isOpen: open };
+}
+
+function renderResultsSection(model: HubModel): HTMLElement {
+  const section = el("div", "section");
+  const { header, isOpen } = sectionHeader(
+    "Results",
+    String(model.results.length),
+  );
+  section.appendChild(header);
+  if (!isOpen()) {
+    return section;
+  }
+  if (model.results.length === 0) {
+    section.appendChild(
+      el("div", "empty", state?.busy ? "Searching…" : "No matches."),
+    );
+    return section;
+  }
+  for (const r of model.results) {
+    section.appendChild(renderResultRow(r, model.query));
+  }
+  return section;
+}
+
+function renderResultRow(result: ResultEntry, query: string): HTMLElement {
+  const session = result.session;
+  const row = el("div", "row result");
+  row.title = `${session.title ?? session.session_id}\n${session.project}`;
+
+  const head = el("div", "result-head");
+  head.appendChild(el("span", `dot ${session.source}`));
+  const title = el("span", "label grow");
+  appendHighlighted(
+    title,
+    session.title ?? firstLine(session.snippet) ?? session.session_id,
+    query,
+  );
+  head.appendChild(title);
+  head.appendChild(hoverButtons(sessionActions(session), 3));
+  row.appendChild(head);
+
+  const snippet = el("div", "result-snippet");
+  appendHighlighted(snippet, condenseSnippet(result.snippet, query), query);
+  row.appendChild(snippet);
+
+  const meta = el("div", "result-meta");
+  meta.textContent = `${lastSegment(session.project)} · ${relTime(session.timestamp)}`;
+  row.appendChild(meta);
+
+  attachContextMenu(row, sessionActions(session));
+  makeNavigable(row, () =>
+    send({ type: "open", sessionId: session.session_id, title: session.title }),
+  );
+  row.addEventListener("click", () =>
+    send({ type: "open", sessionId: session.session_id, title: session.title }),
+  );
+  return row;
+}
+
+function renderRecentSection(model: HubModel): HTMLElement {
+  const section = el("div", "section");
+  const { header, isOpen } = sectionHeader("Recent", "", {
+    tools: [
+      iconBtn(ICONS.clock, "Statistics", () => send({ type: "stats" })),
+    ],
+  });
+  section.appendChild(header);
+  if (!isOpen()) {
+    return section;
+  }
+  for (const session of model.recent) {
+    section.appendChild(renderSessionRow(session, true, ""));
+  }
+  return section;
 }
 
 function renderProjectsSection(model: HubModel): HTMLElement {
@@ -297,8 +567,8 @@ function renderProjectsSection(model: HubModel): HTMLElement {
   ];
   const { header, isOpen } = sectionHeader(
     "Projects",
-    String(model.projects.length === 0 ? "" : countProjects(model.projects)),
-    tools,
+    model.projects.length === 0 ? "" : String(countProjects(model.projects)),
+    { tools },
   );
   section.appendChild(header);
   if (!isOpen()) {
@@ -349,9 +619,8 @@ function renderProjectNode(node: ProjectNode): HTMLElement {
   const label = el("span", "label grow");
   label.textContent = node.label;
   row.appendChild(label);
-  row.addEventListener("click", () => {
-    toggle(key);
-  });
+  makeNavigable(row, () => toggle(key));
+  row.addEventListener("click", () => toggle(key));
   wrap.appendChild(row);
 
   if (isOpen) {
@@ -372,6 +641,7 @@ function renderProjectEntry(entry: ProjectEntry, label: string): HTMLElement {
   const wrap = el("div");
   const key = `project:${group.path}`;
   const isOpen = expanded.has(key);
+  const actions = projectActions(group);
 
   const row = el("div", "row project" + (isOpen ? " expanded" : ""));
   row.title = group.description
@@ -383,63 +653,23 @@ function renderProjectEntry(entry: ProjectEntry, label: string): HTMLElement {
   labelEl.textContent = label;
   row.appendChild(labelEl);
   for (const tag of group.tags ?? []) {
-    const chip = el("span", "tagchip");
-    chip.textContent = tag;
-    row.appendChild(chip);
+    row.appendChild(tagChip(tag));
   }
   row.appendChild(el("span", "grow"));
   const badge = el("span", "badge meta hide-on-hover");
   badge.textContent = String(entry.sessions.length || group.session_count);
   row.appendChild(badge);
+  row.appendChild(hoverButtons(actions, 4));
 
-  const actions = el("span", "actions");
-  actions.appendChild(
-    iconBtn(ICONS.plus, "New session here", () =>
-      send({ type: "newSession", dir: group.path }),
-    ),
-  );
-  actions.appendChild(
-    iconBtn(ICONS.chat, "Chat about this project", () =>
-      send({ type: "chat", dir: group.path }),
-    ),
-  );
-  actions.appendChild(
-    iconBtn(ICONS.sparkle, "Generate project summary (LLM)", () =>
-      send({ type: "summarize", path: group.path, label: group.name }),
-    ),
-  );
-  actions.appendChild(
-    iconBtn(ICONS.info, "Project details", () =>
-      send({ type: "openProject", path: group.path }),
-    ),
-  );
-  actions.appendChild(
-    iconBtn(ICONS.tag, "Add tag to project", () =>
-      send({ type: "addTag", kind: "project", id: group.path, label: group.name }),
-    ),
-  );
-  if ((group.tags ?? []).length > 0) {
-    actions.appendChild(
-      iconBtn(ICONS.untag, "Remove tag from project", () =>
-        send({
-          type: "removeTag",
-          kind: "project",
-          id: group.path,
-          label: group.name,
-          tags: group.tags ?? [],
-        }),
-      ),
-    );
-  }
-  row.appendChild(actions);
-
+  attachContextMenu(row, actions);
+  makeNavigable(row, () => toggle(key));
   row.addEventListener("click", () => toggle(key));
   wrap.appendChild(row);
 
   if (isOpen) {
     const children = el("div", "children");
     for (const session of entry.sessions) {
-      children.appendChild(renderSessionRow(session, false));
+      children.appendChild(renderSessionRow(session, false, ""));
     }
     if (entry.sessions.length === 0) {
       children.appendChild(el("div", "empty", "No sessions."));
@@ -452,20 +682,22 @@ function renderProjectEntry(entry: ProjectEntry, label: string): HTMLElement {
 function renderSessionRow(
   session: SessionSummary,
   showProject: boolean,
+  query: string,
 ): HTMLElement {
   const row = el("div", "row session");
   row.title = `${session.title ?? session.session_id}\n${session.project}`;
   row.appendChild(el("span", `dot ${session.source}`));
 
   const label = el("span", "label grow");
-  label.textContent =
-    session.title ?? firstLine(session.snippet) ?? session.session_id;
+  appendHighlighted(
+    label,
+    session.title ?? firstLine(session.snippet) ?? session.session_id,
+    query,
+  );
   row.appendChild(label);
 
   for (const tag of session.tags.slice(0, 3)) {
-    const chip = el("span", "tagchip");
-    chip.textContent = tag;
-    row.appendChild(chip);
+    row.appendChild(tagChip(tag));
   }
 
   const meta = el("span", "meta hide-on-hover");
@@ -474,38 +706,13 @@ function renderSessionRow(
     : relTime(session.timestamp);
   row.appendChild(meta);
 
-  const actions = el("span", "actions");
-  actions.appendChild(
-    iconBtn(ICONS.play, "Resume in terminal", () =>
-      send({ type: "resume", sessionId: session.session_id }),
-    ),
-  );
-  actions.appendChild(
-    iconBtn(ICONS.plus, "New session in this project", () =>
-      send({
-        type: "newSession",
-        dir: session.project,
-        sessionId: session.session_id,
-      }),
-    ),
-  );
-  actions.appendChild(
-    iconBtn(ICONS.edit, "Rename", () =>
-      send({ type: "rename", sessionId: session.session_id }),
-    ),
-  );
-  actions.appendChild(
-    iconBtn(ICONS.tag, "Add tag", () =>
-      send({
-        type: "addTag",
-        kind: "session",
-        id: session.session_id,
-        label: session.title ?? session.session_id,
-      }),
-    ),
-  );
-  row.appendChild(actions);
+  const actions = sessionActions(session);
+  row.appendChild(hoverButtons(actions, 3));
 
+  attachContextMenu(row, actions);
+  makeNavigable(row, () =>
+    send({ type: "open", sessionId: session.session_id, title: session.title }),
+  );
   row.addEventListener("click", () =>
     send({ type: "open", sessionId: session.session_id, title: session.title }),
   );
@@ -517,7 +724,6 @@ function renderTagsSection(model: HubModel): HTMLElement {
   const { header, isOpen } = sectionHeader(
     "Tags",
     model.tags.length > 0 ? String(model.tags.length) : "",
-    [],
   );
   section.appendChild(header);
   if (!isOpen()) {
@@ -537,13 +743,14 @@ function renderTagsSection(model: HubModel): HTMLElement {
     const isTagOpen = expanded.has(key);
     const row = el("div", "row" + (isTagOpen ? " expanded" : ""));
     row.appendChild(el("span", "twisty", ICONS.chevron));
-    row.appendChild(el("span", "icon", ICONS.tag));
+    row.appendChild(el("span", "icon tag-icon", ICONS.tag));
     const label = el("span", "label grow");
     label.textContent = entry.tag;
     row.appendChild(label);
     const badge = el("span", "badge");
     badge.textContent = String(entry.count);
     row.appendChild(badge);
+    makeNavigable(row, () => toggle(key));
     row.addEventListener("click", () => toggle(key));
     wrap.appendChild(row);
 
@@ -553,13 +760,103 @@ function renderTagsSection(model: HubModel): HTMLElement {
         children.appendChild(renderProjectEntry(project, project.group.name));
       }
       for (const session of entry.sessions) {
-        children.appendChild(renderSessionRow(session, true));
+        children.appendChild(renderSessionRow(session, true, ""));
       }
       wrap.appendChild(children);
     }
     section.appendChild(wrap);
   }
   return section;
+}
+
+// ── Tag chips (stable hue per tag) ──
+
+function tagChip(tag: string): HTMLElement {
+  const chip = el("span", "tagchip");
+  chip.textContent = tag;
+  const hue = hashHue(tag);
+  chip.style.setProperty("--tag-hue", String(hue));
+  return chip;
+}
+
+function hashHue(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 31 + s.charCodeAt(i)) % 360;
+  }
+  return h;
+}
+
+// ── Keyboard navigation ──
+
+function setActive(index: number): void {
+  if (activeIndex >= 0 && navRows[activeIndex]) {
+    navRows[activeIndex].classList.remove("active");
+  }
+  activeIndex = index;
+  if (activeIndex >= 0 && navRows[activeIndex]) {
+    navRows[activeIndex].classList.add("active");
+  }
+}
+
+function focusList(index: number): void {
+  if (navRows.length === 0) {
+    return;
+  }
+  setActive(Math.max(0, Math.min(index, navRows.length - 1)));
+  navRows[activeIndex].scrollIntoView({ block: "nearest" });
+  navRows[activeIndex].focus?.();
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown" && document.activeElement === searchInput) {
+    return; // handled by the input's own listener
+  }
+  if (navRows.length === 0) {
+    return;
+  }
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    focusList(activeIndex + 1);
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    if (activeIndex <= 0) {
+      searchInput?.focus();
+      setActive(-1);
+    } else {
+      focusList(activeIndex - 1);
+    }
+  } else if (e.key === "Enter" && activeIndex >= 0) {
+    e.preventDefault();
+    const row = navRows[activeIndex] as HTMLElement & {
+      _activate?: () => void;
+    };
+    row._activate?.();
+  } else if (
+    e.key === "ContextMenu" ||
+    (e.shiftKey && e.key === "F10")
+  ) {
+    if (activeIndex >= 0) {
+      e.preventDefault();
+      const rect = navRows[activeIndex].getBoundingClientRect();
+      navRows[activeIndex].dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          clientX: rect.left + 20,
+          clientY: rect.bottom,
+        }),
+      );
+    }
+  }
+});
+
+function firstLine(text: string): string {
+  return text.split("\n")[0]?.trim() ?? "";
+}
+
+function lastSegment(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] ?? path;
 }
 
 function toggle(key: string): void {
@@ -570,15 +867,6 @@ function toggle(key: string): void {
   }
   persist();
   render();
-}
-
-function firstLine(text: string): string {
-  return text.split("\n")[0]?.trim() ?? "";
-}
-
-function lastSegment(path: string): string {
-  const parts = path.split(/[\\/]/).filter(Boolean);
-  return parts[parts.length - 1] ?? path;
 }
 
 // ── Wire up ──

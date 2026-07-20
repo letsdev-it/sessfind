@@ -47,8 +47,17 @@ actions on every row.
 - **Chat about a project** — the 💬 action opens claude/opencode/codex in the
   project root with the context pre-loaded (description, tags, recent
   sessions with ids, and hints to query sessfind for details).
+- **Search results** — typing a query shows a ranked **Results** section with
+  the matching snippet highlighted per hit (real search, not just tree
+  filtering). With no query, a **Recent** section gives one-click resume of
+  your latest sessions.
+- **Keyboard & context menu** — `↓` from the search box moves into the list,
+  `↑`/`↓` navigate, `Enter` opens, right-click (or the menu key) opens a
+  context menu with every row action.
 - **Statistics** — a data-based dashboard: sessions per source, 14-day
-  activity, most active projects, tags, engine status.
+  activity, a 12-week contribution heatmap, busiest hours, a 7-day work log
+  (grouped by day and project — handy for standups), most active projects,
+  tags, engine status.
 - **Git context** — the project details page appends recent commits and open
   pull requests when `git`/`gh` are available.
 - **Project details** — open a project overview page with metadata and

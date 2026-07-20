@@ -61,6 +61,45 @@ describe("renderStats", () => {
     expect(md).toContain("`rust` (1)");
   });
 
+  it("renders a 12-week heatmap with a legend", () => {
+    const md = renderStats({}, sessions, projects, today);
+    expect(md).toContain("Contribution heatmap (12 weeks)");
+    expect(md).toContain("Mon ");
+    expect(md).toContain("Sun ");
+    expect(md).toMatch(/less .*more/);
+  });
+
+  it("renders busiest-hours buckets", () => {
+    const md = renderStats({}, sessions, projects, today);
+    expect(md).toContain("## Busiest hours");
+    // Sessions at 10:00Z — hour depends on TZ, but a labelled 24h grid exists.
+    expect(md).toContain("00:00");
+    expect(md).toContain("23:00");
+  });
+
+  it("renders a 7-day work log grouped by day and project", () => {
+    const near = new Date("2026-07-18T09:30:00Z");
+    const recent = [
+      {
+        ...sessions[0],
+        session_id: "r",
+        title: "Recent work",
+        timestamp: near.toISOString(),
+      },
+    ];
+    const md = renderStats({}, recent, projects, today);
+    expect(md).toContain("## Work log (last 7 days)");
+    expect(md).toContain("### 2026-07-18");
+    expect(md).toContain("**p**");
+    expect(md).toContain("Recent work");
+  });
+
+  it("work log notes when nothing is recent", () => {
+    const old = [session("z", "2020-01-01")];
+    const md = renderStats({}, old, projects, today);
+    expect(md).toContain("_No sessions in the last 7 days._");
+  });
+
   it("reports engines", () => {
     const md = renderStats(
       {

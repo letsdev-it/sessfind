@@ -99,21 +99,33 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
     const instant = method === "fts" || method === "fuzzy";
-    filter = instant ? { query, engineIds: [], engineOnly: false } : filter;
+    filter = instant
+      ? { query, engineIds: [], engineOnly: false, matches: [] }
+      : filter;
     busy = true;
     await pushState();
     try {
       const results = await client.search(query, method, 500);
       if (seq === filterSeq) {
+        // Best (first-ranked) snippet per session, order preserved.
+        const seen = new Set<string>();
+        const matches = [];
+        for (const r of results) {
+          if (!seen.has(r.session_id)) {
+            seen.add(r.session_id);
+            matches.push({ session_id: r.session_id, snippet: r.snippet });
+          }
+        }
         filter = {
           query,
-          engineIds: [...new Set(results.map((r) => r.session_id))],
+          engineIds: [...seen],
           engineOnly: !instant,
+          matches,
         };
       }
     } catch {
       if (seq === filterSeq && !instant) {
-        filter = { query, engineIds: [], engineOnly: false };
+        filter = { query, engineIds: [], engineOnly: false, matches: [] };
       }
     } finally {
       if (seq === filterSeq) {

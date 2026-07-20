@@ -46,6 +46,40 @@ function state(over: Partial<HubState>): HubState {
   };
 }
 
+describe("buildModel results & recent", () => {
+  const sessions = [
+    session("a", "/p/alpha", { title: "old", timestamp: "2026-01-01T00:00:00Z" }),
+    session("b", "/p/alpha", { title: "new", timestamp: "2026-03-01T00:00:00Z" }),
+  ];
+  const projects = [group("/p/alpha", 2)];
+
+  it("recent lists newest first, no filter", () => {
+    const model = buildModel(state({ sessions, projects }));
+    expect(model.recent.map((s) => s.session_id)).toEqual(["b", "a"]);
+    expect(model.results).toEqual([]);
+  });
+
+  it("results follow engine rank order with snippets, then substring extras", () => {
+    const model = buildModel(
+      state({
+        sessions,
+        projects,
+        filter: {
+          query: "new",
+          engineIds: ["b"],
+          engineOnly: false,
+          matches: [{ session_id: "b", snippet: "ranked snippet for b" }],
+        },
+      }),
+    );
+    expect(model.recent).toEqual([]);
+    // 'b' from the engine (with its snippet) comes first.
+    expect(model.results[0].session.session_id).toBe("b");
+    expect(model.results[0].snippet).toBe("ranked snippet for b");
+    expect(model.query).toBe("new");
+  });
+});
+
 describe("buildModel", () => {
   // Sessions arrive from the CLI with effective tags (direct + inherited
   // from a tagged directory) — /p/alpha is dir-tagged "hub".
@@ -84,7 +118,7 @@ describe("buildModel", () => {
       state({
         sessions,
         projects,
-        filter: { query: "zzz", engineIds: ["c"], engineOnly: true },
+        filter: { query: "zzz", engineIds: ["c"], engineOnly: true, matches: [] },
       }),
     );
     expect(model.visibleSessions).toBe(1);
@@ -101,7 +135,7 @@ describe("buildModel", () => {
       state({
         sessions,
         projects,
-        filter: { query: "session", engineIds: [], engineOnly: false },
+        filter: { query: "session", engineIds: [], engineOnly: false, matches: [] },
       }),
     );
     const alpha = model.projects.find(

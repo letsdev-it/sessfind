@@ -9,11 +9,22 @@ import type {
 
 export type ViewMode = "list" | "tree";
 
+/** One ranked engine match: the session and the best snippet found in it. */
+export interface RankedMatch {
+  session_id: string;
+  snippet: string;
+}
+
 /** Serializable form of the active filter (Sets don't survive postMessage). */
 export interface FilterPayload {
   query: string;
   engineIds: string[];
   engineOnly: boolean;
+  /**
+   * Ranked engine matches (best first) with their snippets, for the Results
+   * section. Empty for substring-only filters that never hit the engine.
+   */
+  matches: RankedMatch[];
 }
 
 export interface HubState {
