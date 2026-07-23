@@ -52,7 +52,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
 
     match key.code {
         KeyCode::Esc => {
-            app.should_quit = true;
+            if app.semantic_searching || app.llm_searching {
+                app.cancel_pending_search();
+            } else {
+                app.should_quit = true;
+            }
         }
         KeyCode::BackTab if app.focus == Focus::Search => {
             app.toggle_mode();
@@ -152,8 +156,12 @@ fn handle_results_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.toggle_sort();
         }
+        KeyCode::Char('r') if app.results_pane == ResultsPane::Preview => {
+            app.reindex_selected_source();
+        }
         KeyCode::Enter => app.resume_selected(),
-        KeyCode::PageUp => app.scroll_detail_top(),
+        KeyCode::PageUp => app.scroll_detail_page_up(),
+        KeyCode::PageDown => app.scroll_detail_page_down(),
         _ => {}
     }
 }

@@ -6,6 +6,8 @@ The VS Code extension is a thin client of the `sessfind` executable. It does
 not read assistant storage or the Tantivy index directly. The extension checks
 `sessfind capabilities`, requires an exact supported JSON API version, and
 shows only optional actions advertised in `capabilities.features`.
+The hub requires the source-qualified identity, catalog reconciliation,
+source-freshness, and session-grouped-search capabilities.
 
 JSON structs shared with frontends live in `sessfind-common`. Changes are
 additive while `json_api_version` remains unchanged; breaking changes require a
@@ -34,6 +36,11 @@ selects and persists another method.
 
 Hover controls reserve their layout space and change only visibility, so list
 rows and section headers do not resize when actions appear.
+
+The extension fetches source freshness with the catalog data. Stale and failed
+sources remain browsable from their last successful sync and produce a visible
+warning. If the configured default search method is unavailable, the hub warns
+and uses full-text search for that activation.
 
 Resume and new-session commands prefer VS Code shell integration. If integration
 does not become available, the extension asks before typing into the terminal.

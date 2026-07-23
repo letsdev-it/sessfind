@@ -42,12 +42,18 @@ pub struct Config {
 }
 
 impl Config {
-    /// Load config from disk. Returns default if file doesn't exist.
-    pub fn load() -> Self {
+    /// Load config from disk. A missing file is the default configuration;
+    /// malformed or unreadable existing configuration is reported.
+    pub fn load() -> anyhow::Result<Self> {
         let path = config_path();
         match std::fs::read_to_string(&path) {
-            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-            Err(_) => Self::default(),
+            Ok(contents) => serde_json::from_str(&contents)
+                .map_err(|error| anyhow::anyhow!("Invalid config {}: {error}", path.display())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(error) => Err(anyhow::anyhow!(
+                "Cannot read config {}: {error}",
+                path.display()
+            )),
         }
     }
 

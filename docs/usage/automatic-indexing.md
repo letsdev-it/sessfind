@@ -7,7 +7,8 @@ Below are several ways to automate this — pick whichever suits your workflow.
 
 ## Option 1: `sessfind watch` (recommended)
 
-A background daemon that monitors session directories and re-indexes automatically when files change.
+A background daemon that monitors session directories and reconciles the index
+automatically when files change. This covers additions, updates, and deletions.
 Uses OS-level file watching (FSEvents on macOS, inotify on Linux) — essentially zero CPU when idle.
 
 ### Run in foreground
@@ -42,7 +43,9 @@ Index right before launching the TUI:
 sessfind --index
 ```
 
-This runs a quick incremental index (only new/changed sessions) and then opens the interactive UI.
+This runs a quick reconciled index (new, changed, and removed sessions) and then
+opens the interactive UI. A source that cannot refresh stays searchable from
+its last successful catalog and is shown as stale in `sessfind stats`.
 Good enough if you always search via the TUI.
 
 ---

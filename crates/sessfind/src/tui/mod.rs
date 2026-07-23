@@ -19,6 +19,9 @@ use crate::indexer::engine::IndexEngine;
 pub use sessfind_common::CommandSpec as ResumeCommand;
 
 pub fn run(engine: &IndexEngine, initial_mode: Option<&str>) -> Result<Option<ResumeCommand>> {
+    // Validate catalog and initial mode before taking control of the terminal.
+    let mut app = app::App::new(engine, initial_mode)?;
+
     // Setup terminal
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
@@ -26,21 +29,11 @@ pub fn run(engine: &IndexEngine, initial_mode: Option<&str>) -> Result<Option<Re
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = app::App::new(engine, initial_mode)?;
-
     // Main loop
     loop {
         terminal.draw(|f| ui::draw(f, &mut app))?;
 
-        // If deferred search was requested, run it now (after UI redraw showed "Searching...")
-        if app.semantic_searching {
-            app.run_pending_semantic_search();
-            continue;
-        }
-        if app.llm_searching {
-            app.run_pending_llm_search();
-            continue;
-        }
+        app.poll_pending_search();
 
         if let Ok(Some(ver)) = app.update_rx.try_recv()
             && ver != env!("CARGO_PKG_VERSION")

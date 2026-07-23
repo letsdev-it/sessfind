@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use wait_timeout::ChildExt;
@@ -32,8 +33,8 @@ impl LlmBackend {
 
 /// Detect installed LLM CLI tools that support headless mode.
 /// Loads config to resolve per-backend model overrides.
-pub fn detect_backends() -> Vec<LlmBackend> {
-    let config = Config::load();
+pub fn detect_backends() -> Result<Vec<LlmBackend>> {
+    let config = Config::load()?;
     let mut backends = Vec::new();
 
     let definitions: &[(&str, &str, &[&str], &str)] = &[
@@ -59,7 +60,7 @@ pub fn detect_backends() -> Vec<LlmBackend> {
         }
     }
 
-    backends
+    Ok(backends)
 }
 
 /// Outcome of an LLM query-expansion search: the FTS queries that were run
@@ -80,8 +81,19 @@ pub fn expanded_search(
     user_query: &str,
     base: &SearchParams,
 ) -> Result<ExpandedSearch> {
+    let cancelled = AtomicBool::new(false);
+    expanded_search_cancellable(engine, backend, user_query, base, &cancelled)
+}
+
+pub fn expanded_search_cancellable(
+    engine: &IndexEngine,
+    backend: &LlmBackend,
+    user_query: &str,
+    base: &SearchParams,
+    cancelled: &AtomicBool,
+) -> Result<ExpandedSearch> {
     let prompt = build_query_gen_prompt(user_query);
-    let response = invoke(backend, &prompt)?;
+    let response = invoke_cancellable(backend, &prompt, cancelled)?;
     let mut queries = parse_query_gen_response(&response);
     if queries.is_empty() {
         queries = vec![user_query.to_string()];
@@ -89,6 +101,9 @@ pub fn expanded_search(
 
     let mut results = Vec::new();
     for query in &queries {
+        if cancelled.load(Ordering::Relaxed) {
+            anyhow::bail!("LLM search cancelled");
+        }
         let params = SearchParams {
             query: query.clone(),
             ..base.clone()
@@ -146,14 +161,27 @@ fn strip_markdown_fences(response: &str) -> &str {
         .unwrap_or(trimmed)
 }
 
-/// Invoke the LLM backend in headless mode with the given prompt.
-pub fn invoke(backend: &LlmBackend, prompt: &str) -> Result<String> {
-    invoke_with_budget(backend, prompt, 0.25)
-}
-
 /// Invoke with an explicit USD budget cap (applies to claude only; other
 /// backends have no budget flag).
 pub fn invoke_with_budget(backend: &LlmBackend, prompt: &str, budget_usd: f64) -> Result<String> {
+    let cancelled = AtomicBool::new(false);
+    invoke_with_budget_cancellable(backend, prompt, budget_usd, &cancelled)
+}
+
+pub fn invoke_cancellable(
+    backend: &LlmBackend,
+    prompt: &str,
+    cancelled: &AtomicBool,
+) -> Result<String> {
+    invoke_with_budget_cancellable(backend, prompt, 0.25, cancelled)
+}
+
+fn invoke_with_budget_cancellable(
+    backend: &LlmBackend,
+    prompt: &str,
+    budget_usd: f64,
+    cancelled: &AtomicBool,
+) -> Result<String> {
     let mut cmd = std::process::Command::new(&backend.binary);
 
     for arg in &backend.headless_args {
@@ -197,17 +225,26 @@ pub fn invoke_with_budget(backend: &LlmBackend, prompt: &str, budget_usd: f64) -
         std::io::Read::read_to_end(&mut reader, &mut bytes).map(|_| bytes)
     });
 
-    let status = match child.wait_timeout(Duration::from_secs(180)) {
-        Ok(Some(status)) => Some(status),
-        Ok(None) => {
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let status = loop {
+        if cancelled.load(Ordering::Relaxed) {
             let _ = child.kill();
             let _ = child.wait();
-            None
+            break None;
         }
-        Err(err) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(err.into());
+        match child.wait_timeout(Duration::from_millis(100)) {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if Instant::now() < deadline => {}
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(err.into());
+            }
         }
     };
     let stdout = stdout_reader
@@ -216,6 +253,9 @@ pub fn invoke_with_budget(backend: &LlmBackend, prompt: &str, budget_usd: f64) -
     let stderr = stderr_reader
         .join()
         .map_err(|_| anyhow::anyhow!("LLM stderr reader panicked"))??;
+    if cancelled.load(Ordering::Relaxed) {
+        anyhow::bail!("LLM search cancelled");
+    }
     let Some(status) = status else {
         anyhow::bail!("LLM invocation via {} timed out after 180s", backend.name);
     };

@@ -71,6 +71,24 @@ export interface Capabilities {
   data_dir: string;
 }
 
+export interface SourceFreshness {
+  status: "absent" | "available" | "stale" | "failed";
+  sessions: number;
+  last_success?: string | null;
+  last_attempt?: string | null;
+  error?: string | null;
+}
+
+/** Additive shape returned by `sessfind stats --json`. */
+export interface StatsPayload {
+  sessions?: Record<string, number>;
+  sources?: Partial<Record<Source, SourceFreshness>>;
+  semantic?: { available?: boolean; model?: string; indexed_chunks?: number };
+  llm_backends?: { name: string; model: string | null }[];
+  watcher?: { installed?: boolean; state?: string; error?: string };
+  data_dir?: string;
+}
+
 export interface SearchResult {
   chunk_id: string;
   session_id: string;

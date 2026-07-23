@@ -13,17 +13,13 @@ mod version_check;
 mod watcher;
 
 use anyhow::Result;
-use chrono::{NaiveDate, TimeZone, Utc};
+use chrono::{Local, NaiveDate, TimeZone, Utc};
 use clap::{Parser, Subcommand};
 
 use crate::indexer::engine::{IndexEngine, SearchParams};
+use crate::models::Source;
 use crate::search::results::{SortOrder, dedup_by_session};
 use crate::sources::SessionSource;
-use crate::sources::claude_code::ClaudeCodeSource;
-use crate::sources::codex::CodexSource;
-use crate::sources::copilot::CopilotSource;
-use crate::sources::cursor::CursorSource;
-use crate::sources::opencode::OpenCodeSource;
 
 #[derive(Parser)]
 #[command(
@@ -271,34 +267,39 @@ enum WatchAction {
     Status,
 }
 
-fn get_sources(filter: &str) -> Vec<Box<dyn SessionSource>> {
+fn get_sources(filter: &str) -> Result<Vec<Box<dyn SessionSource>>> {
     let mut sources: Vec<Box<dyn SessionSource>> = Vec::new();
     match filter {
         "all" => {
-            sources.push(Box::new(ClaudeCodeSource::new()));
-            sources.push(Box::new(OpenCodeSource::new()));
-            sources.push(Box::new(CopilotSource::new()));
-            sources.push(Box::new(CursorSource::new()));
-            sources.push(Box::new(CodexSource::new()));
+            sources = crate::sources::all_sources();
         }
-        "claude" => sources.push(Box::new(ClaudeCodeSource::new())),
-        "opencode" => sources.push(Box::new(OpenCodeSource::new())),
-        "copilot" => sources.push(Box::new(CopilotSource::new())),
-        "cursor" => sources.push(Box::new(CursorSource::new())),
-        "codex" => sources.push(Box::new(CodexSource::new())),
+        "claude" | "opencode" | "copilot" | "cursor" | "codex" => {
+            sources.push(crate::sources::source_for(
+                Source::parse_source(filter).expect("validated source"),
+            ));
+        }
         other => {
-            eprintln!(
+            anyhow::bail!(
                 "Unknown source: {other}. Available: claude, opencode, copilot, cursor, codex, all"
-            );
+            )
         }
     }
-    sources
+    Ok(sources)
 }
 
-fn parse_date(s: &str) -> Result<chrono::DateTime<Utc>> {
+fn parse_date(s: &str, end_of_day: bool) -> Result<chrono::DateTime<Utc>> {
     let date = NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .map_err(|_| anyhow::anyhow!("Invalid date format: {s}. Expected YYYY-MM-DD"))?;
-    Ok(Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0).unwrap()))
+    let time = if end_of_day {
+        date.and_hms_nano_opt(23, 59, 59, 999_999_999).unwrap()
+    } else {
+        date.and_hms_opt(0, 0, 0).unwrap()
+    };
+    let local = Local
+        .from_local_datetime(&time)
+        .single()
+        .ok_or_else(|| anyhow::anyhow!("Date is not unique in the local timezone: {s}"))?;
+    Ok(local.with_timezone(&Utc))
 }
 
 fn main() -> Result<()> {
@@ -316,12 +317,16 @@ fn main() -> Result<()> {
             let engine = open_engine()?;
             // Index before launching TUI if requested
             if cli.index {
-                let sources = get_sources("all");
+                let sources = get_sources("all")?;
                 for src in &sources {
-                    let _ = engine.index_source(src.as_ref(), false);
+                    if let Err(error) = engine.index_source(src.as_ref(), false) {
+                        eprintln!("Warning: failed to index {}: {error}", src.name());
+                    }
                 }
-                if semantic::is_available() {
-                    let _ = semantic::trigger_index();
+                if semantic::is_available()
+                    && let Err(error) = semantic::trigger_index()
+                {
+                    eprintln!("Warning: semantic indexing failed: {error}");
                 }
             }
             // Launch TUI
@@ -335,17 +340,24 @@ fn main() -> Result<()> {
     match command {
         Commands::Index { source, force } => {
             let engine = open_engine()?;
-            let sources = get_sources(&source);
+            let sources = get_sources(&source)?;
+            let mut failures = Vec::new();
             for src in &sources {
                 eprint!("Indexing {}... ", src.name());
-                let stats = engine.index_source(src.as_ref(), force)?;
-                if stats.new_sessions == 0 {
-                    eprintln!("up to date ({} sessions)", stats.total_sessions);
-                } else {
-                    eprintln!(
-                        "done ({} new sessions, {} chunks)",
-                        stats.new_sessions, stats.total_chunks
-                    );
+                match engine.index_source(src.as_ref(), force) {
+                    Ok(stats) => eprintln!(
+                        "done ({} added, {} updated, {} removed, {} unchanged, {} skipped, {} chunks)",
+                        stats.new_sessions,
+                        stats.updated_sessions,
+                        stats.removed_sessions,
+                        stats.unchanged_sessions,
+                        stats.skipped_sessions,
+                        stats.total_chunks
+                    ),
+                    Err(error) => {
+                        eprintln!("failed: {error}");
+                        failures.push(format!("{}: {error}", src.name()));
+                    }
                 }
             }
 
@@ -353,10 +365,16 @@ fn main() -> Result<()> {
             if semantic::is_available() {
                 eprintln!();
                 eprint!("Updating semantic index... ");
-                match semantic::trigger_index() {
-                    Ok(()) => {}
-                    Err(e) => eprintln!("warning: semantic indexing failed: {e}"),
+                if let Err(error) = semantic::trigger_index() {
+                    eprintln!("warning: semantic indexing failed: {error}");
                 }
+            }
+            if !failures.is_empty() {
+                anyhow::bail!(
+                    "Indexing failed for {} source(s): {}",
+                    failures.len(),
+                    failures.join("; ")
+                );
             }
         }
         Commands::Search {
@@ -370,8 +388,22 @@ fn main() -> Result<()> {
             json,
         } => {
             let engine = open_engine()?;
-            let after_dt = after.as_deref().map(parse_date).transpose()?;
-            let before_dt = before.as_deref().map(parse_date).transpose()?;
+            if let Some(source) = source.as_deref()
+                && Source::parse_source(source).is_none()
+            {
+                anyhow::bail!("Unknown source: {source}");
+            }
+            if !["fts", "fuzzy", "semantic", "llm"].contains(&method.as_str()) {
+                anyhow::bail!("Unknown search method: {method}");
+            }
+            let after_dt = after
+                .as_deref()
+                .map(|value| parse_date(value, false))
+                .transpose()?;
+            let before_dt = before
+                .as_deref()
+                .map(|value| parse_date(value, true))
+                .transpose()?;
 
             let params = SearchParams {
                 query: query.clone(),
@@ -382,24 +414,19 @@ fn main() -> Result<()> {
                 before: before_dt,
             };
 
-            let results = if method == "semantic" {
+            let mut results = if method == "semantic" {
                 if !semantic::is_available() {
-                    eprintln!("Semantic search plugin not installed.");
-                    eprintln!("Install with: cargo install sessfind-semantic");
-                    if json {
-                        anyhow::bail!("semantic search unavailable");
-                    }
-                    return Ok(());
+                    anyhow::bail!(
+                        "Semantic search unavailable. Install with: cargo install sessfind-semantic"
+                    );
                 }
                 semantic::search(&params)?
             } else if method == "llm" {
-                let backends = llm::detect_backends();
+                let backends = llm::detect_backends()?;
                 if backends.is_empty() {
-                    eprintln!("No LLM CLI tools detected (claude, opencode, copilot).");
-                    if json {
-                        anyhow::bail!("llm search unavailable");
-                    }
-                    return Ok(());
+                    anyhow::bail!(
+                        "LLM search unavailable: no supported CLI detected (claude, opencode, copilot)"
+                    );
                 }
                 let backend = &backends[0];
                 eprintln!("Searching with LLM ({})...", backend.display());
@@ -415,13 +442,17 @@ fn main() -> Result<()> {
                 let expanded = llm::expanded_search(&engine, backend, &query, &base)?;
                 eprintln!("LLM generated {} queries", expanded.queries.len());
 
-                dedup_by_session(&expanded.results, SortOrder::ScoreDesc)
+                expanded.results
             } else if method == "fuzzy" {
                 engine.search_fuzzy(&params)?
             } else {
                 engine.search(&params)?
             };
 
+            let store = open_metadata()?;
+            results.extend(commands::metadata_search_matches(&engine, &store, &params)?);
+            commands::apply_custom_names(&store, &mut results)?;
+            let results = dedup_by_session(&results, SortOrder::ScoreDesc);
             commands::print_search_results(&results, limit, json)?;
         }
         Commands::Show {
@@ -457,6 +488,11 @@ fn main() -> Result<()> {
                 sort,
                 json,
             } => {
+                if let Some(source) = source.as_deref()
+                    && Source::parse_source(source).is_none()
+                {
+                    anyhow::bail!("Unknown source: {source}");
+                }
                 let sort = match sort.as_str() {
                     "time" => SortOrder::TimeDesc,
                     "score" => SortOrder::ScoreDesc,
@@ -483,6 +519,9 @@ fn main() -> Result<()> {
                 name,
                 clear,
             } => {
+                if clear == name.is_some() {
+                    anyhow::bail!("sessions rename requires exactly one of NAME or --clear");
+                }
                 let engine = open_engine()?;
                 let store = open_metadata()?;
                 let name = if clear { None } else { name };
@@ -551,21 +590,30 @@ fn main() -> Result<()> {
             }
         }
         Commands::LlmModelSet { provider, model } => {
-            let valid = ["claude", "opencode", "copilot", "cursor", "codex"];
+            let valid = ["claude", "opencode", "copilot"];
             if !valid.contains(&provider.as_str()) {
-                eprintln!(
+                anyhow::bail!(
                     "Unknown provider: {provider}. Available: {}",
                     valid.join(", ")
                 );
-                return Ok(());
             }
-            let mut cfg = config::Config::load();
+            if model.trim().is_empty() {
+                anyhow::bail!("Model identifier cannot be empty");
+            }
+            let mut cfg = config::Config::load()?;
             cfg.llm_models.insert(provider.clone(), model.clone());
             cfg.save()?;
             println!("Set {provider} model to: {model}");
         }
         Commands::LlmModelUnset { provider } => {
-            let mut cfg = config::Config::load();
+            let valid = ["claude", "opencode", "copilot"];
+            if !valid.contains(&provider.as_str()) {
+                anyhow::bail!(
+                    "Unknown provider: {provider}. Available: {}",
+                    valid.join(", ")
+                );
+            }
+            let mut cfg = config::Config::load()?;
             if cfg.llm_models.remove(&provider).is_some() {
                 cfg.save()?;
                 println!("Removed model override for {provider} (will use tool default)");
@@ -591,9 +639,15 @@ fn exec_resume(resume: &tui::ResumeCommand) -> Result<()> {
     // Claude Code requires being in the project directory to find the session
     if let Some(ref cwd) = resume.cwd {
         let path = std::path::Path::new(cwd);
-        if path.is_dir() {
-            command.current_dir(path);
+        if !path.exists() {
+            std::fs::create_dir_all(path).map_err(|error| {
+                anyhow::anyhow!("Cannot create resume directory {cwd}: {error}")
+            })?;
         }
+        if !path.is_dir() {
+            anyhow::bail!("Resume working directory is not a directory: {cwd}");
+        }
+        command.current_dir(path);
     }
     // Replace current process with the resume command
     let err = command.exec();

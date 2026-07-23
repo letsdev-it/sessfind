@@ -38,6 +38,7 @@ export interface HubState {
   filter: FilterPayload | null;
   busy: boolean;
   searchError: string | null;
+  warnings: string[];
   /** Non-null when the binary is unavailable/incompatible; UI shows it. */
   error: string | null;
 }

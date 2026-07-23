@@ -75,7 +75,8 @@ fn index_unknown_source() {
     sessfind()
         .args(["index", "--source", "nonexistent"])
         .assert()
-        .success(); // warns but doesn't fail
+        .failure()
+        .stderr(predicate::str::contains("Unknown source"));
 }
 
 // ── Search ──
@@ -123,6 +124,24 @@ fn search_with_method_flag() {
         .success();
 }
 
+#[test]
+fn search_unknown_method_fails_instead_of_falling_back() {
+    sessfind()
+        .args(["search", "test", "--method", "bogus"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Unknown search method"));
+}
+
+#[test]
+fn search_unknown_source_fails() {
+    sessfind()
+        .args(["search", "test", "--source", "bogus"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Unknown source"));
+}
+
 // ── Show ──
 
 #[test]
@@ -130,7 +149,7 @@ fn show_nonexistent_session() {
     sessfind()
         .args(["show", "nonexistent-session-id-12345"])
         .assert()
-        .success()
+        .failure()
         .stderr(predicate::str::contains("No session found"));
 }
 
@@ -233,6 +252,8 @@ fn stats_json_parses() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let stats: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert!(stats["sessions"]["total"].is_number());
+    assert!(stats["sessions"]["distinct_total"].is_number());
+    assert!(stats["sources"]["claude"]["status"].is_string());
     assert!(stats["semantic"]["available"].is_boolean());
 }
 
@@ -287,6 +308,21 @@ fn projects_summarize_unknown_dir_fails() {
         .stderr(predicate::str::contains("No indexed sessions"));
 }
 
+#[test]
+fn projects_summarize_unsupported_tool_is_a_usage_error() {
+    sessfind()
+        .args([
+            "projects",
+            "summarize",
+            "/definitely/not/a/project/dir",
+            "--tool",
+            "codex",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Unsupported summary tool"));
+}
+
 // ── Tags & session names ──
 
 #[test]
@@ -301,6 +337,24 @@ fn rename_unknown_session_fails() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("No indexed session"));
+}
+
+#[test]
+fn rename_requires_name_or_clear() {
+    sessfind()
+        .args(["sessions", "rename", "session-id"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("exactly one"));
+}
+
+#[test]
+fn rename_rejects_name_and_clear_together() {
+    sessfind()
+        .args(["sessions", "rename", "session-id", "Name", "--clear"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("exactly one"));
 }
 
 #[test]

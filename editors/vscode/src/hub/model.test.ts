@@ -44,6 +44,7 @@ function state(over: Partial<HubState>): HubState {
     filter: null,
     busy: false,
     searchError: null,
+    warnings: [],
     error: null,
     ...over,
   };

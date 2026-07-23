@@ -11,6 +11,7 @@ use sessfind_common::{
 
 use crate::indexer::engine::IndexEngine;
 use crate::metadata::MetadataStore;
+use crate::models::SearchParams;
 use crate::models::{SearchResult, Source};
 use crate::search::results::{SortOrder, apply_sort};
 use crate::{config, llm, semantic};
@@ -32,6 +33,9 @@ const FEATURES: &[&str] = &[
     "project-chat",
     "source-qualified-sessions",
     "direct-session-tags",
+    "source-freshness",
+    "catalog-reconciliation",
+    "session-grouped-search",
 ];
 
 pub fn session_summary(r: &SearchResult) -> SessionSummary {
@@ -51,6 +55,26 @@ pub fn session_summary(r: &SearchResult) -> SessionSummary {
     }
 }
 
+pub fn apply_custom_names(store: &MetadataStore, sessions: &mut [SearchResult]) -> Result<()> {
+    let refs: Vec<(String, String)> = sessions
+        .iter()
+        .map(|session| {
+            (
+                session_key(session.source, &session.session_id),
+                session.session_id.clone(),
+            )
+        })
+        .collect();
+    let names = store.names_for_sessions(&refs)?;
+    for session in sessions {
+        let key = session_key(session.source, &session.session_id);
+        if let Some(name) = names.get(&key) {
+            session.title = Some(name.clone());
+        }
+    }
+    Ok(())
+}
+
 pub fn capabilities() -> Result<()> {
     let caps = Capabilities {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -59,8 +83,11 @@ pub fn capabilities() -> Result<()> {
         search_methods: SearchMethods {
             fts: true,
             fuzzy: true,
-            semantic: semantic::is_available(),
-            llm: llm::detect_backends().into_iter().map(|b| b.name).collect(),
+            semantic: semantic::is_available() && semantic::status().is_ok(),
+            llm: llm::detect_backends()?
+                .into_iter()
+                .map(|b| b.name)
+                .collect(),
         },
         data_dir: config::data_dir().display().to_string(),
     };
@@ -272,6 +299,181 @@ pub fn print_search_results(results: &[SearchResult], limit: usize, json: bool) 
     Ok(())
 }
 
+/// Supplement engine matches with sessfind-owned searchable metadata. Source
+/// titles and projects are indexed by Tantivy; this path adds custom titles and
+/// direct/inherited tags, which can change without rewriting source history.
+pub fn metadata_search_matches(
+    engine: &IndexEngine,
+    store: &MetadataStore,
+    params: &SearchParams,
+) -> Result<Vec<SearchResult>> {
+    let mut sessions = engine.list_sessions()?;
+    if let Some(source) = &params.source {
+        sessions.retain(|session| session.source.as_str() == source);
+    }
+    if let Some(project) = &params.project {
+        let project = project.to_lowercase();
+        sessions.retain(|session| session.project.to_lowercase().contains(&project));
+    }
+    if let Some(after) = params.after {
+        sessions.retain(|session| session.timestamp >= after);
+    }
+    if let Some(before) = params.before {
+        sessions.retain(|session| session.timestamp <= before);
+    }
+
+    let refs: Vec<(String, String)> = sessions
+        .iter()
+        .map(|session| {
+            (
+                session_key(session.source, &session.session_id),
+                session.session_id.clone(),
+            )
+        })
+        .collect();
+    let names = store.names_for_sessions(&refs)?;
+    let tags = store.tags_for_sessions(&refs)?;
+    let project_tags = store.project_tags_map()?;
+
+    let terms = parse_metadata_terms(&params.query);
+    let required: Vec<&MetadataTerm> = terms
+        .iter()
+        .filter(|term| term.occur == MetadataOccur::Required)
+        .collect();
+    let optional: Vec<&MetadataTerm> = terms
+        .iter()
+        .filter(|term| term.occur == MetadataOccur::Optional)
+        .collect();
+    let excluded: Vec<&MetadataTerm> = terms
+        .iter()
+        .filter(|term| term.occur == MetadataOccur::Excluded)
+        .collect();
+
+    let mut matches = Vec::new();
+    for mut session in sessions {
+        let key = session_key(session.source, &session.session_id);
+        let custom_name = names.get(&key);
+        let mut effective_tags = tags.get(&key).cloned().unwrap_or_default();
+        if let Some(inherited) = project_tags.get(&session.project) {
+            effective_tags.extend(inherited.iter().cloned());
+        }
+        let haystack = format!(
+            "{}\n{}\n{}\n{}",
+            custom_name.map(String::as_str).unwrap_or(""),
+            session.title.as_deref().unwrap_or(""),
+            session.project,
+            effective_tags.join("\n")
+        )
+        .to_lowercase();
+        let required_match = required
+            .iter()
+            .all(|term| metadata_term_matches(term, &haystack));
+        let optional_match = optional.is_empty()
+            || optional
+                .iter()
+                .any(|term| metadata_term_matches(term, &haystack));
+        let excluded_match = excluded
+            .iter()
+            .any(|term| metadata_term_matches(term, &haystack));
+        if required_match
+            && optional_match
+            && !excluded_match
+            && (!required.is_empty() || !optional.is_empty())
+        {
+            if let Some(name) = custom_name {
+                session.title = Some(name.clone());
+            }
+            session.snippet = if effective_tags.is_empty() {
+                format!("Matched session metadata: {}", session.project)
+            } else {
+                format!("Matched tags: {}", effective_tags.join(", "))
+            };
+            session.score = 0.1;
+            matches.push(session);
+        }
+    }
+    Ok(matches)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MetadataOccur {
+    Optional,
+    Required,
+    Excluded,
+}
+
+struct MetadataTerm {
+    value: String,
+    occur: MetadataOccur,
+    prefix: bool,
+}
+
+fn parse_metadata_terms(query: &str) -> Vec<MetadataTerm> {
+    let chars: Vec<char> = query.chars().collect();
+    let mut terms = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        while chars.get(index).is_some_and(|value| value.is_whitespace()) {
+            index += 1;
+        }
+        if index >= chars.len() {
+            break;
+        }
+        let occur = match chars[index] {
+            '+' => {
+                index += 1;
+                MetadataOccur::Required
+            }
+            '-' => {
+                index += 1;
+                MetadataOccur::Excluded
+            }
+            _ => MetadataOccur::Optional,
+        };
+        let quoted = chars.get(index) == Some(&'"');
+        if quoted {
+            index += 1;
+        }
+        let start = index;
+        if quoted {
+            while chars.get(index).is_some_and(|value| *value != '"') {
+                index += 1;
+            }
+        } else {
+            while chars.get(index).is_some_and(|value| !value.is_whitespace()) {
+                index += 1;
+            }
+        }
+        let mut value: String = chars[start..index].iter().collect();
+        if quoted && chars.get(index) == Some(&'"') {
+            index += 1;
+        }
+        let prefix = !quoted && value.ends_with('*');
+        if prefix {
+            value.pop();
+        }
+        let value = value.to_lowercase();
+        if !value.is_empty() {
+            terms.push(MetadataTerm {
+                value,
+                occur,
+                prefix,
+            });
+        }
+    }
+    terms
+}
+
+fn metadata_term_matches(term: &MetadataTerm, haystack: &str) -> bool {
+    if term.prefix {
+        haystack
+            .split(|value: char| !value.is_alphanumeric() && value != '_' && value != '-')
+            .any(|word| word.starts_with(&term.value))
+    } else {
+        haystack.contains(&term.value)
+    }
+}
+
 pub fn show(
     engine: &IndexEngine,
     store: &MetadataStore,
@@ -281,12 +483,9 @@ pub fn show(
 ) -> Result<()> {
     let chunks = session_chunks(engine, session_id, source)?;
     if chunks.is_empty() {
-        if json {
-            anyhow::bail!("No session found with ID: {session_id}");
-        }
-        eprintln!("No session found with ID: {session_id}");
-        eprintln!("Tip: Use the full session ID from search results.");
-        return Ok(());
+        anyhow::bail!(
+            "No session found with ID: {session_id}. Use the complete ID from search results"
+        );
     }
     let key = session_key(chunks[0].source, session_id);
 
@@ -360,6 +559,25 @@ pub fn stats(engine: &IndexEngine, json: bool) -> Result<()> {
     let cursor = engine.session_count(Some("cursor"))?;
     let codex = engine.session_count(Some("codex"))?;
     let total = engine.session_count(None)?;
+    let sync_states = engine.source_sync_states()?;
+    let source_status = |source: &str, count: usize| {
+        let state = sync_states.iter().find(|state| state.source == source);
+        let status = match state {
+            Some(state) if state.last_error.is_some() && state.last_success.is_some() => "stale",
+            Some(state) if state.last_error.is_some() => "failed",
+            Some(_) if count == 0 => "absent",
+            Some(_) => "available",
+            None if count == 0 => "absent",
+            None => "stale",
+        };
+        serde_json::json!({
+            "status": status,
+            "sessions": count,
+            "last_success": state.and_then(|state| state.last_success),
+            "last_attempt": state.and_then(|state| state.last_attempt),
+            "error": state.and_then(|state| state.last_error.as_deref()),
+        })
+    };
 
     if json {
         let semantic_status = if semantic::is_available() {
@@ -374,7 +592,7 @@ pub fn stats(engine: &IndexEngine, json: bool) -> Result<()> {
         } else {
             serde_json::json!({ "available": false })
         };
-        let backends: Vec<serde_json::Value> = llm::detect_backends()
+        let backends: Vec<serde_json::Value> = llm::detect_backends()?
             .into_iter()
             .map(|b| serde_json::json!({ "name": b.name, "model": b.model }))
             .collect();
@@ -386,9 +604,18 @@ pub fn stats(engine: &IndexEngine, json: bool) -> Result<()> {
                 "cursor": cursor,
                 "codex": codex,
                 "total": total,
+                "distinct_total": total,
+            },
+            "sources": {
+                "claude": source_status("claude", claude),
+                "opencode": source_status("opencode", opencode),
+                "copilot": source_status("copilot", copilot),
+                "cursor": source_status("cursor", cursor),
+                "codex": source_status("codex", codex),
             },
             "semantic": semantic_status,
             "llm_backends": backends,
+            "watcher": crate::service::status_json(),
             "data_dir": config::data_dir().display().to_string(),
         });
         println!("{output}");
@@ -402,6 +629,23 @@ pub fn stats(engine: &IndexEngine, json: bool) -> Result<()> {
     println!("  \x1b[32mCursor:\x1b[0m      {cursor}");
     println!("  \x1b[91mCodex:\x1b[0m       {codex}");
     println!("  Total:       {total}");
+    println!();
+    println!("\x1b[1mSource freshness:\x1b[0m");
+    for (source, count) in [
+        ("claude", claude),
+        ("opencode", opencode),
+        ("copilot", copilot),
+        ("cursor", cursor),
+        ("codex", codex),
+    ] {
+        let value = source_status(source, count);
+        let status = value["status"].as_str().unwrap_or("unknown");
+        let last = value["last_success"].as_str().unwrap_or("never");
+        println!("  {source:<10} {status:<10} last success: {last}");
+        if let Some(error) = value["error"].as_str() {
+            println!("    error: {error}");
+        }
+    }
     println!();
 
     // Semantic plugin status
@@ -424,7 +668,7 @@ pub fn stats(engine: &IndexEngine, json: bool) -> Result<()> {
     }
 
     // LLM backends
-    let backends = llm::detect_backends();
+    let backends = llm::detect_backends()?;
     if backends.is_empty() {
         println!(
             "\x1b[90mLLM search: no CLI tools detected (install claude, opencode, or copilot)\x1b[0m"
@@ -443,6 +687,12 @@ pub fn stats(engine: &IndexEngine, json: bool) -> Result<()> {
             crate::config::config_path().display()
         );
     }
+    println!();
+    let watcher = crate::service::status_json();
+    println!(
+        "\x1b[1mWatcher:\x1b[0m {}",
+        watcher["state"].as_str().unwrap_or("unknown")
+    );
     println!();
 
     println!(
@@ -567,9 +817,14 @@ pub fn projects_summarize(
     tool: Option<&str>,
     json: bool,
 ) -> Result<()> {
+    if let Some(tool) = tool
+        && !["claude", "opencode", "copilot"].contains(&tool)
+    {
+        anyhow::bail!("Unsupported summary tool: {tool}. Available: claude, opencode, copilot");
+    }
     let (dir, sessions) = project_sessions(engine, dir)?;
 
-    let backends = llm::detect_backends();
+    let backends = llm::detect_backends()?;
     let backend = match tool {
         Some(name) => backends
             .iter()
@@ -660,6 +915,11 @@ pub fn projects_chat(
     tool: Option<&str>,
     json: bool,
 ) -> Result<()> {
+    if let Some(tool) = tool
+        && !["claude", "opencode", "codex"].contains(&tool)
+    {
+        anyhow::bail!("Unsupported chat tool: {tool}. Available: claude, opencode, codex");
+    }
     let (dir, sessions) = project_sessions(engine, dir)?;
     let tags = store
         .project_tags_map()?
@@ -995,5 +1255,19 @@ mod tests {
         assert_eq!(truncate_str("longer-than-max", 10), "longer-...");
         assert_eq!(truncate_project("/a/b/c", 10), "/a/b/c");
         assert!(truncate_project("/very/long/project/path", 10).starts_with("..."));
+    }
+
+    #[test]
+    fn metadata_terms_preserve_fts_operators_and_phrases() {
+        let terms = parse_metadata_terms(r#"+shopping "exact phrase" -legacy shopp*"#);
+        assert_eq!(terms.len(), 4);
+        assert_eq!(terms[0].occur, MetadataOccur::Required);
+        assert_eq!(terms[0].value, "shopping");
+        assert_eq!(terms[1].occur, MetadataOccur::Optional);
+        assert_eq!(terms[1].value, "exact phrase");
+        assert_eq!(terms[2].occur, MetadataOccur::Excluded);
+        assert_eq!(terms[2].value, "legacy");
+        assert!(terms[3].prefix);
+        assert!(metadata_term_matches(&terms[3], "a shopping assistant"));
     }
 }

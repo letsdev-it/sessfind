@@ -16,9 +16,11 @@ its `--json` output. Everything the extension does is also available from the
 
 ## Installing
 
-The extension lives in [`editors/vscode`](https://github.com/letsdev-it/sessfind/tree/main/editors/vscode).
-Until it is published to the Marketplace and Open VSX (see the roadmap below),
-build a `.vsix` locally:
+Install **sessfind** from the
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=letsdev-it.sessfind).
+The source lives in
+[`editors/vscode`](https://github.com/letsdev-it/sessfind/tree/main/editors/vscode).
+You can also build a `.vsix` locally:
 
 ```bash
 cd editors/vscode
@@ -55,6 +57,8 @@ actions on every row.
   activity, a 12-week contribution heatmap, busiest hours, a 7-day work log
   (grouped by day and project — handy for standups), most active projects,
   tags, engine status.
+- **Freshness warnings** — stale or failed sources and the unavailable
+  configured default search method are shown without hiding last-known data.
 - **Git context** — the project details page appends recent commits and open
   pull requests when `git`/`gh` are available.
 - **Project details** — open a project overview page with metadata and
@@ -84,7 +88,5 @@ When a terminal does not report shell integration after ten seconds, the
 extension asks before typing the resume/new-session command. This avoids sending
 commands into shell startup prompts.
 
-## Roadmap
-
-- Marketplace + Open VSX publishing.
-- A dedicated standalone web UI built on the same JSON layer.
+Marketplace publication is automated from `vscode-v*` GitHub releases. A
+dedicated standalone web UI built on the same JSON layer remains planned.

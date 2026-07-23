@@ -8,12 +8,6 @@ use notify_debouncer_mini::{DebouncedEventKind, new_debouncer};
 use crate::config;
 use crate::indexer::engine::IndexEngine;
 use crate::semantic;
-use crate::sources::SessionSource;
-use crate::sources::claude_code::ClaudeCodeSource;
-use crate::sources::codex::CodexSource;
-use crate::sources::copilot::CopilotSource;
-use crate::sources::cursor::CursorSource;
-use crate::sources::opencode::OpenCodeSource;
 
 const DEBOUNCE_SECS: u64 = 5;
 
@@ -60,7 +54,7 @@ pub fn run() -> Result<()> {
                 match run_index() {
                     Ok(indexed) => {
                         if indexed > 0 {
-                            eprintln!("Indexed {indexed} new session(s).");
+                            eprintln!("Applied {indexed} catalog change(s).");
                         } else {
                             eprintln!("Already up to date.");
                         }
@@ -81,32 +75,32 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
-/// Run incremental indexing for all sources. Returns number of newly indexed sessions.
+/// Run reconciliation for all sources. Returns the number of catalog changes.
 fn run_index() -> Result<usize> {
     let data_dir = config::data_dir();
     let engine = IndexEngine::open(&data_dir)?;
 
-    let sources: Vec<Box<dyn SessionSource>> = vec![
-        Box::new(ClaudeCodeSource::new()),
-        Box::new(OpenCodeSource::new()),
-        Box::new(CopilotSource::new()),
-        Box::new(CursorSource::new()),
-        Box::new(CodexSource::new()),
-    ];
+    let sources = crate::sources::all_sources();
 
-    let mut total_new = 0usize;
+    let mut total_changes = 0usize;
     for src in &sources {
         match engine.index_source(src.as_ref(), false) {
-            Ok(stats) => total_new += stats.new_sessions,
+            Ok(stats) => {
+                total_changes +=
+                    stats.new_sessions + stats.updated_sessions + stats.removed_sessions
+            }
             Err(e) => eprintln!("Warning: failed to index {}: {e}", src.name()),
         }
     }
 
-    if semantic::is_available() && total_new > 0 {
-        let _ = semantic::trigger_index();
+    if semantic::is_available()
+        && total_changes > 0
+        && let Err(error) = semantic::trigger_index()
+    {
+        eprintln!("Warning: semantic indexing failed: {error}");
     }
 
-    Ok(total_new)
+    Ok(total_changes)
 }
 
 /// Collect directories to watch (only those that exist on disk).

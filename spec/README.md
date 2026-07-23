@@ -13,6 +13,7 @@ spec document in the same pull request as architectural code changes.
 ## Architecture
 
 - [VS Code extension and JSON API](vscode-extension.md)
+- [Catalog indexing and freshness](catalog-index.md)
 
 ## Stack and dependencies
 

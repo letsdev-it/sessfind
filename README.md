@@ -29,7 +29,7 @@
 - **Semantic search** — find conceptually similar sessions using ML embeddings (optional plugin)
 - **LLM search** — agentic search using installed AI CLI tools (Claude Code, OpenCode, Copilot)
 - Resume any session directly from the search results with directory choice
-- Incremental indexing — only processes new/changed sessions
+- Reconciled incremental indexing — adds and updates sessions and removes entries deleted at the source
 - **Automatic indexing** — background watcher re-indexes on session changes ([details](docs/usage/automatic-indexing.md))
 - **Agent skill** — use sessfind directly from GitHub Copilot CLI, Claude Code, or OpenCode ([details](docs/usage/agent-skill.md))
 - Zero external runtime dependencies — single static binary
@@ -67,11 +67,10 @@ Combine both: `sessfind --index`. See [Quick Start docs](https://letsdev-it.gith
 ## LLM data use
 
 Indexes, tags, and custom names stay local. Explicit LLM search sends the search
-intent to the selected installed AI CLI. Explicit project summarization sends
-session titles and excerpts from up to five recent conversations; the VS Code
-extension asks for modal confirmation and the CLI prints a disclosure first.
-Claude summary calls use a USD 0.50 cap, while other providers use their own
-billing controls.
+intent to the selected installed AI CLI. Project summarization is available
+only from the CLI and sends session titles and excerpts from up to five recent
+conversations after printing a disclosure. Provider billing and limits remain
+authoritative.
 
 ## Documentation
 

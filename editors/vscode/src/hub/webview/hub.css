@@ -491,3 +491,13 @@ mark {
   font-size: 12px;
   white-space: pre-wrap;
 }
+
+.warning {
+  margin: 6px var(--pad);
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  color: var(--vscode-editorWarning-foreground, #cca700);
+  background: var(--vscode-inputValidation-warningBackground, rgba(204, 167, 0, 0.12));
+  border: 1px solid var(--vscode-inputValidation-warningBorder, rgba(204, 167, 0, 0.45));
+  font-size: 12px;
+}

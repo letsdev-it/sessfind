@@ -9,6 +9,7 @@ import type {
   SessionDetail,
   SessionSummary,
   Source,
+  StatsPayload,
   ToolInfo,
 } from "./types";
 
@@ -176,8 +177,8 @@ export class SessfindClient {
     return this.run(["index"]);
   }
 
-  stats(): Promise<unknown> {
-    return this.runJson<unknown>(["stats", "--json"]);
+  stats(): Promise<StatsPayload> {
+    return this.runJson<StatsPayload>(["stats", "--json"]);
   }
 
   /** Command that opens a chat about the project, context pre-loaded. */

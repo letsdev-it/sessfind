@@ -27,10 +27,11 @@ The TUI opens in full-screen mode with three areas:
 | `Ctrl+S` | Toggle sort order (Newest first / Best match) |
 | `Up/Down`, `j/k` | Navigate results |
 | `Enter` | Resume selected session (opens confirmation dialog) |
-| `PgUp/PgDn` | Scroll session preview |
+| `PgUp/PgDn` | Scroll session preview by one page |
+| `r` | Re-index the selected session's source (preview pane) |
 | `Ctrl+U` | Clear search input |
-| `?` | Show help popup |
-| `Esc` | Quit |
+| `F1` | Show help popup |
+| `Esc` | Cancel a pending search, close help, or quit |
 
 !!! note
     `Semantic` mode is only available when the [`sessfind-semantic`](../plugins/semantic-search.md) plugin is installed.
@@ -61,3 +62,7 @@ Use `↑/↓` to select an option and `Enter` to confirm, or `Esc` to cancel.
 ![sessfind resume confirmation dialog](../assets/tui-resume.webp)
 
 All dates in the TUI are displayed in your computer's local timezone.
+
+Search failures are shown separately from an empty result set and keep the
+previous successful results visible. The status bar and preview also warn when
+a source is stale or failed; press `r` in the preview pane to retry that source.

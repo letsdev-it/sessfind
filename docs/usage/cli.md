@@ -8,6 +8,12 @@ sessfind index --source claude     # index only Claude Code
 sessfind index --force             # re-index everything
 ```
 
+Each successful source pass reconciles the catalog: new and changed sessions
+are indexed and sessions removed from that source disappear from search.
+When indexing all sources, every source is attempted. Successful updates are
+kept even if another source fails, and the command exits non-zero after
+reporting all failures.
+
 ## Search from CLI (non-interactive)
 
 ```bash
@@ -37,7 +43,10 @@ sessfind show SESSION_ID --source claude
 sessfind stats
 ```
 
-Shows number of indexed sessions per source, semantic plugin status, and active LLM backends.
+Shows the number of indexed sessions per source, each source's freshness and
+last successful sync, watcher state, semantic plugin status, and active LLM
+backends. A failed refresh keeps the last successful data searchable and marks
+that source stale.
 
 ## JSON output & session/project listing
 
@@ -87,9 +96,8 @@ sessfind projects chat ~/code/backend --tool claude
 ```
 
 Project summarization sends session titles and excerpts from up to five recent
-conversations to the selected provider. The CLI prints a notice before
-invocation. Claude uses a USD 0.50 cap; other providers use their own billing
-controls.
+conversations to the selected provider. It is a CLI-only action and prints a
+notice before invocation. Provider billing and limits remain authoritative.
 
 ## Rename a session
 
@@ -119,9 +127,14 @@ sessfind llm-model-unset claude    # revert to tool's default model
 
 | Flag | Description |
 |------|-------------|
-| `-s, --source` | Filter by source (`claude`, `opencode`, `copilot`) |
+| `-s, --source` | Filter by source (`claude`, `opencode`, `copilot`, `cursor`, `codex`) |
 | `-p, --project` | Filter by project name (substring match) |
 | `--after` | Only results after date (`YYYY-MM-DD`) |
 | `--before` | Only results before date (`YYYY-MM-DD`) |
 | `-n, --limit` | Max results (default: 10) |
 | `-m, --method` | Search method: `fts` (default), `fuzzy`, `semantic`, `llm` |
+
+Search output contains at most one result per source-qualified session. Unknown
+sources or methods, unavailable requested engines, ambiguous session IDs, and
+backend failures return a non-zero exit status instead of being reported as an
+empty result set.

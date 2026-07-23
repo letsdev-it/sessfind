@@ -1,12 +1,9 @@
-import type { ProjectGroup, SessionSummary } from "../sessfind/types";
-
-/** Shape of `sessfind stats --json` (loosely typed; fields are additive). */
-export interface StatsPayload {
-  sessions?: Record<string, number>;
-  semantic?: { available?: boolean; model?: string; indexed_chunks?: number };
-  llm_backends?: { name: string; model: string | null }[];
-  data_dir?: string;
-}
+import type {
+  ProjectGroup,
+  SessionSummary,
+  StatsPayload,
+} from "../sessfind/types";
+export type { StatsPayload } from "../sessfind/types";
 
 /**
  * Render a data-based statistics page as Markdown: totals per source,
@@ -33,6 +30,24 @@ export function renderStats(
     }
   }
   lines.push(`| **total** | **${counts.total ?? sessions.length}** |`, "");
+  const freshness = stats.sources ?? {};
+  if (Object.keys(freshness).length > 0) {
+    lines.push("## Source freshness", "");
+    lines.push("| Source | Status | Last successful sync |");
+    lines.push("| --- | --- | --- |");
+    for (const source of ["claude", "opencode", "copilot", "cursor", "codex"] as const) {
+      const state = freshness[source];
+      if (state) {
+        lines.push(
+          `| ${source} | ${state.status} | ${state.last_success ?? "never"} |`,
+        );
+        if (state.error) {
+          lines.push(`|  | error | ${state.error.replaceAll("|", "\\|")} |`);
+        }
+      }
+    }
+    lines.push("");
+  }
 
   const perDay = new Map<string, number>();
   for (const s of sessions) {
@@ -115,6 +130,7 @@ export function renderStats(
         : "none detected"
     }`,
   );
+  lines.push(`- Watcher: ${stats.watcher?.state ?? "unknown"}`);
   if (stats.data_dir) {
     lines.push(`- Index location: \`${stats.data_dir}\``);
   }

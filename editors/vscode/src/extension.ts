@@ -34,7 +34,12 @@ import {
 } from "./sessfind/types";
 
 const VIEW_MODE_KEY = "sessfind.projectsViewMode";
-const REQUIRED_FEATURES = ["source-qualified-sessions"];
+const REQUIRED_FEATURES = [
+  "source-qualified-sessions",
+  "source-freshness",
+  "catalog-reconciliation",
+  "session-grouped-search",
+];
 
 export function activate(context: vscode.ExtensionContext): void {
   const client = new SessfindClient();
@@ -60,6 +65,7 @@ export function activate(context: vscode.ExtensionContext): void {
     let sessions: SessionSummary[] = [];
     let projects = [] as Awaited<ReturnType<SessfindClient["projects"]>>;
     let error: string | null = null;
+    const warnings: string[] = [];
     try {
       const caps = await client.capabilities();
       methods = availableMethods(caps);
@@ -77,16 +83,34 @@ export function activate(context: vscode.ExtensionContext): void {
         .get<string>("defaultSearchMethod");
       defaultMethod = methods.includes(configuredMethod as SearchMethod)
         ? (configuredMethod as SearchMethod)
-        : methods[0] ?? "fts";
+        : "fts";
+      if (
+        configuredMethod &&
+        !methods.includes(configuredMethod as SearchMethod)
+      ) {
+        warnings.push(
+          `Configured search method '${configuredMethod}' is unavailable; using full-text for this activation.`,
+        );
+      }
       if (caps.json_api_version !== SUPPORTED_JSON_API_VERSION) {
         throw new Error(
           `Incompatible sessfind JSON API v${caps.json_api_version}; this extension requires v${SUPPORTED_JSON_API_VERSION}.`,
         );
       }
-      [sessions, projects] = await Promise.all([
+      const [loadedSessions, loadedProjects, stats] = await Promise.all([
         client.sessions(),
         client.projects(),
+        client.stats(),
       ]);
+      sessions = loadedSessions;
+      projects = loadedProjects;
+      for (const [source, freshness] of Object.entries(stats.sources ?? {})) {
+        if (freshness?.status === "stale" || freshness?.status === "failed") {
+          warnings.push(
+            `${source} is ${freshness.status}; last successful sync: ${freshness.last_success ?? "never"}${freshness.error ? ` (${freshness.error})` : ""}.`,
+          );
+        }
+      }
     } catch (err) {
       if (err instanceof BinaryNotFoundError) {
         error =
@@ -109,6 +133,7 @@ export function activate(context: vscode.ExtensionContext): void {
         filter,
         busy,
         searchError,
+        warnings,
         error,
       },
     });

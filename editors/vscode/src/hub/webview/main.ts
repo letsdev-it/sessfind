@@ -336,6 +336,9 @@ function render(): void {
     root.appendChild(el("div", "error")).textContent = state.error;
     return;
   }
+  for (const warning of state.warnings) {
+    root.appendChild(el("div", "warning")).textContent = warning;
+  }
 
   const model = buildModel(state);
   if (model.query.length > 0) {

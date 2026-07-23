@@ -1,8 +1,12 @@
 use std::path::PathBuf;
+use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use anyhow::Result;
 use serde::Deserialize;
 use sessfind_common::{SearchParams, SearchResult};
+use wait_timeout::ChildExt;
 
 const PLUGIN_NAME: &str = "sessfind-semantic";
 
@@ -29,6 +33,14 @@ pub fn is_available() -> bool {
 
 /// Run semantic search via the plugin subprocess.
 pub fn search(params: &SearchParams) -> Result<Vec<SearchResult>> {
+    let cancelled = AtomicBool::new(false);
+    search_cancellable(params, &cancelled)
+}
+
+pub fn search_cancellable(
+    params: &SearchParams,
+    cancelled: &AtomicBool,
+) -> Result<Vec<SearchResult>> {
     let bin = find_plugin().ok_or_else(|| anyhow::anyhow!("sessfind-semantic not found"))?;
 
     let mut cmd = std::process::Command::new(bin);
@@ -51,13 +63,58 @@ pub fn search(params: &SearchParams) -> Result<Vec<SearchResult>> {
             .arg(before.format("%Y-%m-%d").to_string());
     }
 
-    let output = cmd.output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn()?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("failed to capture semantic-search stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("failed to capture semantic-search stderr"))?;
+    let stdout_reader = std::thread::spawn(move || {
+        let mut reader = stdout;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut reader, &mut bytes).map(|_| bytes)
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut reader = stderr;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut reader, &mut bytes).map(|_| bytes)
+    });
+    let status = loop {
+        if cancelled.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        match child.wait_timeout(Duration::from_millis(100)) {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => continue,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error.into());
+            }
+        }
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("semantic-search stdout reader panicked"))??;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("semantic-search stderr reader panicked"))??;
+    if cancelled.load(Ordering::Relaxed) {
+        anyhow::bail!("Semantic search cancelled");
+    }
+    let status = status.expect("non-cancelled semantic search has an exit status");
+    if !status.success() {
+        let stderr = String::from_utf8_lossy(&stderr);
         anyhow::bail!("sessfind-semantic search failed: {stderr}");
     }
 
-    let stdout = String::from_utf8(output.stdout)?;
+    let stdout = String::from_utf8(stdout)?;
     let results: Vec<SearchResult> = serde_json::from_str(&stdout)?;
     Ok(results)
 }
