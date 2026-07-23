@@ -43,36 +43,77 @@ export async function runCommandSpec(
  * Run a command line once the shell is actually ready. Plain `sendText` types
  * into whatever currently owns the terminal — e.g. an oh-my-zsh "update?
  * [Y/n]" prompt during rc-file startup would swallow the first characters.
- * Shell integration fires only after the prompt appears, so prefer it, with a
- * sendText fallback for shells where integration never activates.
+ * Shell integration fires only after the prompt appears. If it never
+ * activates, ask before typing into a terminal whose current prompt is
+ * unknown.
  */
 function sendWhenShellReady(
   terminal: vscode.Terminal,
   commandLine: string,
 ): void {
-  const FALLBACK_MS = 4000;
+  const FALLBACK_MS = 10_000;
   let done = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let integrationListener: vscode.Disposable | undefined;
+  let closeListener: vscode.Disposable | undefined;
+
+  const cleanup = () => {
+    integrationListener?.dispose();
+    closeListener?.dispose();
+    if (timer) {
+      clearTimeout(timer);
+    }
+  };
 
   const run = () => {
     if (done) {
       return;
     }
     done = true;
-    listener.dispose();
-    clearTimeout(timer);
+    cleanup();
     if (terminal.shellIntegration) {
       terminal.shellIntegration.executeCommand(commandLine);
-    } else {
-      terminal.sendText(commandLine);
     }
   };
 
-  const listener = vscode.window.onDidChangeTerminalShellIntegration((e) => {
-    if (e.terminal === terminal) {
-      run();
+  integrationListener = vscode.window.onDidChangeTerminalShellIntegration(
+    (e) => {
+      if (e.terminal === terminal) {
+        run();
+      }
+    },
+  );
+  closeListener = vscode.window.onDidCloseTerminal((closed) => {
+    if (closed === terminal && !done) {
+      done = true;
+      cleanup();
     }
   });
-  const timer = setTimeout(run, FALLBACK_MS);
+  const offerFallback = async () => {
+    if (done) {
+      return;
+    }
+    const choice = await vscode.window.showWarningMessage(
+      "The terminal shell is not ready yet. Running now could type into a startup prompt.",
+      "Run anyway",
+      "Copy command",
+    );
+    if (done) {
+      return;
+    }
+    if (choice === "Run anyway") {
+      done = true;
+      cleanup();
+      terminal.sendText(commandLine);
+    } else if (choice === "Copy command") {
+      done = true;
+      cleanup();
+      await vscode.env.clipboard.writeText(commandLine);
+    }
+  };
+  timer = setTimeout(() => {
+    void offerFallback();
+  }, FALLBACK_MS);
 
   if (terminal.shellIntegration) {
     run();

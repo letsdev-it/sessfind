@@ -1,4 +1,4 @@
-import type { SessionSummary } from "../sessfind/types";
+import { sessionKey, type SessionSummary } from "../sessfind/types";
 
 /**
  * An active session filter: the raw query plus the session ids the search
@@ -23,7 +23,7 @@ export function sessionMatchesFilter(
   if (!filter) {
     return true;
   }
-  if (filter.engineIds.has(session.session_id)) {
+  if (filter.engineIds.has(sessionKey(session))) {
     return true;
   }
   if (filter.engineOnly) {

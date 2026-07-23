@@ -38,9 +38,12 @@ function state(over: Partial<HubState>): HubState {
     sessions: [],
     projects: [],
     methods: ["fts", "fuzzy"],
+    defaultMethod: "fts",
+    features: [],
     viewMode: "list",
     filter: null,
     busy: false,
+    searchError: null,
     error: null,
     ...over,
   };
@@ -66,9 +69,11 @@ describe("buildModel results & recent", () => {
         projects,
         filter: {
           query: "new",
-          engineIds: ["b"],
+          engineIds: ["claude:b"],
           engineOnly: false,
-          matches: [{ session_id: "b", snippet: "ranked snippet for b" }],
+          matches: [
+            { session_key: "claude:b", snippet: "ranked snippet for b" },
+          ],
         },
       }),
     );
@@ -118,7 +123,12 @@ describe("buildModel", () => {
       state({
         sessions,
         projects,
-        filter: { query: "zzz", engineIds: ["c"], engineOnly: true, matches: [] },
+        filter: {
+          query: "zzz",
+          engineIds: ["claude:c"],
+          engineOnly: true,
+          matches: [],
+        },
       }),
     );
     expect(model.visibleSessions).toBe(1);

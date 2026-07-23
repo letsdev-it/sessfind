@@ -8,6 +8,7 @@ import type {
   SearchResult,
   SessionDetail,
   SessionSummary,
+  Source,
   ToolInfo,
 } from "./types";
 
@@ -43,14 +44,30 @@ export class SessfindClient {
     );
   }
 
-  private run(args: string[], token?: vscode.CancellationToken): Promise<string> {
+  private run(
+    args: string[],
+    token?: vscode.CancellationToken,
+    timeoutMs?: number,
+  ): Promise<string> {
     const bin = this.binaryPath();
     return new Promise((resolve, reject) => {
+      let cancellation: vscode.Disposable | undefined;
+      // Node forwards spawn options to execFile at runtime, although the
+      // ExecFileOptions type omits `detached`.
+      const options = {
+        maxBuffer: MAX_BUFFER,
+        timeout: timeoutMs,
+        killSignal: "SIGTERM" as const,
+        detached: token !== undefined && process.platform !== "win32",
+      };
       const child = execFile(
         bin,
         args,
-        { maxBuffer: MAX_BUFFER },
+        // A cancellable CLI gets its own Unix process group so terminating a
+        // superseded search also stops an LLM subprocess it spawned.
+        options,
         (err, stdout, stderr) => {
+          cancellation?.dispose();
           if (err) {
             const code = (err as NodeJS.ErrnoException).code;
             if (code === "ENOENT") {
@@ -75,21 +92,34 @@ export class SessfindClient {
           resolve(stdout.toString());
         },
       );
-      token?.onCancellationRequested(() => child.kill());
+      if (token?.isCancellationRequested) {
+        terminateProcessTree(child);
+      } else {
+        cancellation = token?.onCancellationRequested(() =>
+          terminateProcessTree(child),
+        );
+      }
     });
   }
 
   private async runJson<T>(
     args: string[],
     token?: vscode.CancellationToken,
+    timeoutMs?: number,
   ): Promise<T> {
-    const stdout = await this.run(args, token);
+    const stdout = await this.run(args, token, timeoutMs);
     return JSON.parse(stdout) as T;
   }
 
   capabilities(): Promise<Capabilities> {
     if (!this.capsCache) {
-      this.capsCache = this.runJson<Capabilities>(["capabilities"]);
+      const request = this.runJson<Capabilities>(["capabilities"]);
+      this.capsCache = request;
+      void request.catch(() => {
+        if (this.capsCache === request) {
+          this.capsCache = undefined;
+        }
+      });
     }
     return this.capsCache;
   }
@@ -100,11 +130,17 @@ export class SessfindClient {
 
   async sessions(force = false): Promise<SessionSummary[]> {
     if (force || !this.sessionCache) {
-      this.sessionCache = this.runJson<SessionSummary[]>([
+      const request = this.runJson<SessionSummary[]>([
         "sessions",
         "list",
         "--json",
       ]);
+      this.sessionCache = request;
+      void request.catch(() => {
+        if (this.sessionCache === request) {
+          this.sessionCache = undefined;
+        }
+      });
     }
     return this.sessionCache;
   }
@@ -113,8 +149,14 @@ export class SessfindClient {
     return this.runJson<ProjectGroup[]>(["projects", "list", "--json"]);
   }
 
-  show(sessionId: string): Promise<SessionDetail> {
-    return this.runJson<SessionDetail>(["show", sessionId, "--json"]);
+  show(sessionId: string, source: Source): Promise<SessionDetail> {
+    return this.runJson<SessionDetail>([
+      "show",
+      sessionId,
+      "--source",
+      source,
+      "--json",
+    ]);
   }
 
   search(
@@ -126,6 +168,7 @@ export class SessfindClient {
     return this.runJson<SearchResult[]>(
       ["search", query, "--method", method, "-n", String(limit), "--json"],
       token,
+      190_000,
     );
   }
 
@@ -135,17 +178,6 @@ export class SessfindClient {
 
   stats(): Promise<unknown> {
     return this.runJson<unknown>(["stats", "--json"]);
-  }
-
-  /** Generate and store an LLM summary for a project directory (slow). */
-  async projectsSummarize(dir: string, tool?: string): Promise<string> {
-    const args = ["projects", "summarize", dir, "--json"];
-    if (tool) {
-      args.push("--tool", tool);
-    }
-    const out = JSON.parse(await this.run(args)) as { description: string };
-    this.invalidate();
-    return out.description;
   }
 
   /** Command that opens a chat about the project, context pre-loaded. */
@@ -159,13 +191,21 @@ export class SessfindClient {
 
   // ── Mutations ──
 
-  async tagAdd(sessionId: string, tags: string[]): Promise<void> {
-    await this.run(["tag", "add", sessionId, ...tags]);
+  async tagAdd(
+    sessionId: string,
+    source: Source,
+    tags: string[],
+  ): Promise<void> {
+    await this.run(["tag", "add", sessionId, "--source", source, ...tags]);
     this.invalidate();
   }
 
-  async tagRemove(sessionId: string, tags: string[]): Promise<void> {
-    await this.run(["tag", "rm", sessionId, ...tags]);
+  async tagRemove(
+    sessionId: string,
+    source: Source,
+    tags: string[],
+  ): Promise<void> {
+    await this.run(["tag", "rm", sessionId, "--source", source, ...tags]);
     this.invalidate();
   }
 
@@ -180,11 +220,29 @@ export class SessfindClient {
   }
 
   /** Set a custom display name, or clear it when `name` is null. */
-  async sessionRename(sessionId: string, name: string | null): Promise<void> {
+  async sessionRename(
+    sessionId: string,
+    source: Source,
+    name: string | null,
+  ): Promise<void> {
     if (name === null) {
-      await this.run(["sessions", "rename", sessionId, "--clear"]);
+      await this.run([
+        "sessions",
+        "rename",
+        sessionId,
+        "--source",
+        source,
+        "--clear",
+      ]);
     } else {
-      await this.run(["sessions", "rename", sessionId, name]);
+      await this.run([
+        "sessions",
+        "rename",
+        sessionId,
+        "--source",
+        source,
+        name,
+      ]);
     }
     this.invalidate();
   }
@@ -194,4 +252,28 @@ export class SessfindClient {
     this.sessionCache = undefined;
     this.capsCache = undefined;
   }
+}
+
+function terminateProcessTree(child: ReturnType<typeof execFile>): void {
+  if (process.platform === "win32" && child.pid) {
+    execFile(
+      "taskkill",
+      ["/pid", String(child.pid), "/t", "/f"],
+      (err) => {
+        if (err) {
+          child.kill("SIGTERM");
+        }
+      },
+    ).unref();
+    return;
+  }
+  if (process.platform !== "win32" && child.pid) {
+    try {
+      process.kill(-child.pid, "SIGTERM");
+      return;
+    } catch {
+      // The process may already have exited; child.kill is a safe fallback.
+    }
+  }
+  child.kill("SIGTERM");
 }

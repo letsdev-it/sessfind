@@ -27,6 +27,8 @@ sessfind search "how to handle authentication" --method llm
 
 ```bash
 sessfind show SESSION_ID
+# Native IDs are normally sufficient. Disambiguate a cross-tool collision:
+sessfind show SESSION_ID --source claude
 ```
 
 ## Index statistics
@@ -51,7 +53,7 @@ sessfind show SESSION_ID --json
 sessfind stats --json
 
 sessfind sessions list                # all indexed sessions, newest first
-sessfind sessions list --json --tag work --user-project backend --limit 20
+sessfind sessions list --json --tag work --limit 20
 sessfind projects list --json         # auto-grouped by directory
 ```
 
@@ -64,6 +66,8 @@ effective set.
 ```bash
 sessfind tag add SESSION_ID work rust
 sessfind tag rm SESSION_ID rust
+# Use --source when the same native ID exists in more than one tool:
+sessfind tag add SESSION_ID --source codex work
 sessfind tag add-project ~/code/backend work    # whole directory
 sessfind tag rm-project ~/code/backend work
 sessfind tag list --json
@@ -82,11 +86,17 @@ sessfind projects summarize ~/code/backend --tool claude
 sessfind projects chat ~/code/backend --tool claude
 ```
 
+Project summarization sends session titles and excerpts from up to five recent
+conversations to the selected provider. The CLI prints a notice before
+invocation. Claude uses a USD 0.50 cap; other providers use their own billing
+controls.
+
 ## Rename a session
 
 ```bash
 sessfind sessions rename SESSION_ID "Payments refactor"
 sessfind sessions rename SESSION_ID --clear     # back to the original title
+sessfind sessions rename SESSION_ID --source claude "Payments refactor"
 ```
 
 ## Dump all chunks as JSONL

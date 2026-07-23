@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type { SessfindClient } from "../sessfind/client";
+import type { Source } from "../sessfind/types";
 import { sanitizeForPath } from "../util/sanitize";
 import { renderSession } from "./renderSession";
 
@@ -15,23 +16,42 @@ export const SESSION_SCHEME = "sessfind";
 export class SessionDocumentProvider
   implements vscode.TextDocumentContentProvider
 {
+  private readonly emitter = new vscode.EventEmitter<vscode.Uri>();
+  readonly onDidChange = this.emitter.event;
+
   constructor(private readonly client: SessfindClient) {}
 
-  static uriFor(sessionId: string, title?: string | null): vscode.Uri {
+  invalidate(sessionId: string, source: Source, title?: string | null): void {
+    this.emitter.fire(SessionDocumentProvider.uriFor(sessionId, source, title));
+  }
+
+  static uriFor(
+    sessionId: string,
+    source: Source,
+    title?: string | null,
+  ): vscode.Uri {
     const base = sanitizeForPath(title ?? "") || sessionId;
+    const query = new URLSearchParams({ id: sessionId, source }).toString();
     return vscode.Uri.from({
       scheme: SESSION_SCHEME,
       path: `/${base}.md`,
-      query: sessionId,
+      query,
     });
   }
 
   async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
     // The id lives in the query; fall back to the path for legacy URIs.
+    const params = new URLSearchParams(uri.query);
     const sessionId =
-      uri.query || uri.path.replace(/^\//, "").replace(/\.md$/, "");
+      params.get("id") ||
+      uri.query ||
+      uri.path.replace(/^\//, "").replace(/\.md$/, "");
+    const source = params.get("source") as Source | null;
+    if (!source) {
+      return `# Session unavailable\n\nThe preview URI does not identify the session source. Reopen it from the Sessfind hub.\n`;
+    }
     try {
-      const detail = await this.client.show(sessionId);
+      const detail = await this.client.show(sessionId, source);
       return renderSession(detail);
     } catch (err) {
       return `# Session unavailable\n\nCould not load \`${sessionId}\`.\n\n\`\`\`\n${String(err)}\n\`\`\`\n`;

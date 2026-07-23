@@ -22,6 +22,7 @@ declare function acquireVsCodeApi(): {
 };
 
 const vscode = acquireVsCodeApi();
+const persistedState = vscode.getState();
 
 const INSTANT: SearchMethod[] = ["fts", "fuzzy"];
 const LABELS: Record<SearchMethod, string> = {
@@ -34,8 +35,9 @@ const LABELS: Record<SearchMethod, string> = {
 // ── Local UI state ──
 
 let state: HubState | null = null;
-let method: SearchMethod = vscode.getState()?.method ?? "fts";
-const expanded = new Set<string>(vscode.getState()?.expanded ?? []);
+let method: SearchMethod = persistedState?.method ?? "fts";
+let methodSelected = persistedState?.method !== undefined;
+const expanded = new Set<string>(persistedState?.expanded ?? []);
 let debounce: ReturnType<typeof setTimeout> | undefined;
 
 // Keyboard navigation: navigable rows collected each render, plus active index.
@@ -70,7 +72,6 @@ const ICONS = {
   listFlat: svg('<line x1="3" y1="4" x2="13" y2="4"/><line x1="3" y1="8" x2="13" y2="8"/><line x1="3" y1="12" x2="13" y2="12"/>'),
   refresh: svg('<path d="M13 8a5 5 0 1 1-1.5-3.5"/><path d="M13 2.8v2.7h-2.7"/>'),
   db: svg('<ellipse cx="8" cy="4" rx="5" ry="2"/><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4"/><path d="M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>'),
-  sparkle: svg('<path d="M8 2l1.2 3.6L13 7l-3.8 1.4L8 12l-1.2-3.6L3 7l3.8-1.4z"/><path d="M12.8 11l.5 1.5 1.5.5-1.5.5-.5 1.5-.5-1.5-1.5-.5 1.5-.5z"/>'),
   chat: svg('<path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/>'),
   chart: svg('<line x1="3" y1="13" x2="13" y2="13"/><line x1="4.5" y1="13" x2="4.5" y2="8"/><line x1="8" y1="13" x2="8" y2="4"/><line x1="11.5" y1="13" x2="11.5" y2="10"/>'),
   clock: svg('<circle cx="8" cy="8" r="5.7"/><path d="M8 5v3.2l2 1.3"/>'),
@@ -147,7 +148,12 @@ function sessionActions(session: SessionSummary): MenuAction[] {
     {
       label: "Resume in terminal",
       icon: ICONS.play,
-      run: () => send({ type: "resume", sessionId: session.session_id }),
+      run: () =>
+        send({
+          type: "resume",
+          sessionId: session.session_id,
+          source: session.source,
+        }),
     },
     {
       label: "Open conversation",
@@ -156,6 +162,7 @@ function sessionActions(session: SessionSummary): MenuAction[] {
         send({
           type: "open",
           sessionId: session.session_id,
+          source: session.source,
           title: session.title,
         }),
     },
@@ -167,14 +174,24 @@ function sessionActions(session: SessionSummary): MenuAction[] {
           type: "newSession",
           dir: session.project,
           sessionId: session.session_id,
+          source: session.source,
         }),
     },
-    {
+  ];
+  if (state?.features.includes("session-rename")) {
+    actions.push({
       label: "Rename…",
       icon: ICONS.edit,
-      run: () => send({ type: "rename", sessionId: session.session_id }),
-    },
-    {
+      run: () =>
+        send({
+          type: "rename",
+          sessionId: session.session_id,
+          source: session.source,
+        }),
+    });
+  }
+  if (state?.features.includes("tags")) {
+    actions.push({
       label: "Add tag…",
       icon: ICONS.tag,
       run: () =>
@@ -183,10 +200,16 @@ function sessionActions(session: SessionSummary): MenuAction[] {
           kind: "session",
           id: session.session_id,
           label: session.title ?? session.session_id,
+          source: session.source,
         }),
-    },
-  ];
-  if (session.tags.length > 0) {
+    });
+  }
+  const removableTags = session.direct_tags ?? session.tags;
+  if (
+    state?.features.includes("tags") &&
+    state.features.includes("direct-session-tags") &&
+    removableTags.length > 0
+  ) {
     actions.push({
       label: "Remove tag…",
       icon: ICONS.untag,
@@ -196,7 +219,8 @@ function sessionActions(session: SessionSummary): MenuAction[] {
           kind: "session",
           id: session.session_id,
           label: session.title ?? session.session_id,
-          tags: session.tags,
+          tags: removableTags,
+          source: session.source,
         }),
     });
   }
@@ -210,23 +234,21 @@ function projectActions(group: ProjectEntry["group"]): MenuAction[] {
       icon: ICONS.plus,
       run: () => send({ type: "newSession", dir: group.path }),
     },
-    {
+  ];
+  if (state?.features.includes("project-chat")) {
+    actions.push({
       label: "Chat about this project",
       icon: ICONS.chat,
       run: () => send({ type: "chat", dir: group.path }),
-    },
-    {
-      label: "Generate summary (LLM)",
-      icon: ICONS.sparkle,
-      run: () =>
-        send({ type: "summarize", path: group.path, label: group.name }),
-    },
-    {
+    });
+  }
+  actions.push({
       label: "Project details",
       icon: ICONS.info,
       run: () => send({ type: "openProject", path: group.path }),
-    },
-    {
+    });
+  if (state?.features.includes("project-tags")) {
+    actions.push({
       label: "Add tag…",
       icon: ICONS.tag,
       run: () =>
@@ -236,9 +258,12 @@ function projectActions(group: ProjectEntry["group"]): MenuAction[] {
           id: group.path,
           label: group.name,
         }),
-    },
-  ];
-  if ((group.tags ?? []).length > 0) {
+    });
+  }
+  if (
+    state?.features.includes("project-tags") &&
+    (group.tags ?? []).length > 0
+  ) {
     actions.push({
       label: "Remove tag…",
       icon: ICONS.untag,
@@ -396,6 +421,7 @@ function renderSearch(value: string): HTMLElement {
     chip.title = `Search method: ${LABELS[m]}`;
     chip.addEventListener("click", () => {
       method = m;
+      methodSelected = true;
       persist();
       clearTimeout(debounce);
       const q = searchInput?.value.trim() ?? "";
@@ -425,15 +451,22 @@ function renderStatus(): void {
   const q = searchInput?.value.trim() ?? "";
   if (state?.busy) {
     node.textContent = "searching…";
+    node.classList.remove("error");
+  } else if (state?.searchError) {
+    node.textContent = `Search failed: ${firstLine(state.searchError)}`;
+    node.classList.add("error");
   } else if (!isInstant() && q.length > 0) {
     node.textContent = "Enter ↵ to search";
+    node.classList.remove("error");
   } else if (state?.filter && state.filter.query.length > 0) {
     const model = state ? buildModel(state) : null;
     node.textContent = model
       ? `${model.results.length} result${model.results.length === 1 ? "" : "s"}`
       : "";
+    node.classList.remove("error");
   } else {
     node.textContent = "";
+    node.classList.remove("error");
   }
 }
 
@@ -527,10 +560,20 @@ function renderResultRow(result: ResultEntry, query: string): HTMLElement {
 
   attachContextMenu(row, sessionActions(session));
   makeNavigable(row, () =>
-    send({ type: "open", sessionId: session.session_id, title: session.title }),
+    send({
+      type: "open",
+      sessionId: session.session_id,
+      source: session.source,
+      title: session.title,
+    }),
   );
   row.addEventListener("click", () =>
-    send({ type: "open", sessionId: session.session_id, title: session.title }),
+    send({
+      type: "open",
+      sessionId: session.session_id,
+      source: session.source,
+      title: session.title,
+    }),
   );
   return row;
 }
@@ -711,10 +754,20 @@ function renderSessionRow(
 
   attachContextMenu(row, actions);
   makeNavigable(row, () =>
-    send({ type: "open", sessionId: session.session_id, title: session.title }),
+    send({
+      type: "open",
+      sessionId: session.session_id,
+      source: session.source,
+      title: session.title,
+    }),
   );
   row.addEventListener("click", () =>
-    send({ type: "open", sessionId: session.session_id, title: session.title }),
+    send({
+      type: "open",
+      sessionId: session.session_id,
+      source: session.source,
+      title: session.title,
+    }),
   );
   return row;
 }
@@ -875,6 +928,9 @@ window.addEventListener("message", (event: MessageEvent<ExtToWeb>) => {
   const msg = event.data;
   if (msg.type === "state") {
     state = msg.state;
+    if (!methodSelected) {
+      method = state.defaultMethod;
+    }
     if (!state.methods.includes(method)) {
       method = state.methods[0] ?? "fts";
       persist();

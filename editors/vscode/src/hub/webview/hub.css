@@ -129,6 +129,10 @@ body {
   color: var(--dim);
 }
 
+.statusline.error {
+  color: var(--vscode-errorForeground, #e05561);
+}
+
 /* ── Sections ── */
 
 .section {
@@ -166,12 +170,19 @@ body {
 }
 
 .section-header .tools {
-  display: none;
+  display: flex;
   gap: 2px;
+  flex: none;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
-.section-header:hover .tools {
-  display: flex;
+.section-header:hover .tools,
+.section-header:focus-within .tools {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 /* ── Rows ── */
@@ -239,17 +250,26 @@ body {
 }
 
 .row .actions {
-  display: none;
+  display: flex;
   gap: 2px;
   flex: none;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
-.row:hover .actions {
-  display: flex;
+.row:hover .actions,
+.row:focus-within .actions,
+.row.active .actions {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
 }
 
-.row:hover .meta.hide-on-hover {
-  display: none;
+.row:hover .meta.hide-on-hover,
+.row:focus-within .meta.hide-on-hover,
+.row.active .meta.hide-on-hover {
+  visibility: hidden;
 }
 
 .iconbtn {

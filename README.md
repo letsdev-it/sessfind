@@ -64,6 +64,15 @@ sessfind
 
 Combine both: `sessfind --index`. See [Quick Start docs](https://letsdev-it.github.io/sessfind/getting-started/quick-start/) for more.
 
+## LLM data use
+
+Indexes, tags, and custom names stay local. Explicit LLM search sends the search
+intent to the selected installed AI CLI. Explicit project summarization sends
+session titles and excerpts from up to five recent conversations; the VS Code
+extension asks for modal confirmation and the CLI prints a disclosure first.
+Claude summary calls use a USD 0.50 cap, while other providers use their own
+billing controls.
+
 ## Documentation
 
 - [Installation](https://letsdev-it.github.io/sessfind/getting-started/installation/)

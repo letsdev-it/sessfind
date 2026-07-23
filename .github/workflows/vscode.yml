@@ -5,16 +5,30 @@ on:
     branches: [main]
     paths:
       - 'editors/vscode/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.github/workflows/vscode.yml'
   push:
     branches: [main]
     paths:
       - 'editors/vscode/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.github/workflows/vscode.yml'
+  release:
+    types: [published]
+
+permissions:
+  contents: read
 
 jobs:
   build:
     name: Build & Package
+    if: >-
+      github.event_name != 'release' ||
+      startsWith(github.event.release.tag_name, 'vscode-v')
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -29,10 +43,42 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      - run: npm run build
       - run: npm run package
       - uses: actions/upload-artifact@v4
         with:
           name: sessfind-vsix
           path: editors/vscode/*.vsix
           if-no-files-found: error
+
+  publish:
+    name: Publish to VS Code Marketplace
+    if: >-
+      github.event_name == 'release' &&
+      startsWith(github.event.release.tag_name, 'vscode-v')
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: vscode-marketplace
+    concurrency:
+      group: vscode-marketplace
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: sessfind-vsix
+          path: editors/vscode
+      - name: Publish tested VSIX
+        run: npm run publish:marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}

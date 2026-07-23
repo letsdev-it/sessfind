@@ -1,8 +1,34 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
+use std::ops::{Deref, DerefMut};
+use tempfile::TempDir;
 
-fn sessfind() -> Command {
-    Command::cargo_bin("sessfind").unwrap()
+struct TestCommand {
+    _dir: TempDir,
+    command: Command,
+}
+
+impl Deref for TestCommand {
+    type Target = Command;
+
+    fn deref(&self) -> &Self::Target {
+        &self.command
+    }
+}
+
+impl DerefMut for TestCommand {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.command
+    }
+}
+
+fn sessfind() -> TestCommand {
+    let dir = TempDir::new().unwrap();
+    let mut command = Command::cargo_bin("sessfind").unwrap();
+    command.env("SESSFIND_DATA_DIR", dir.path().join("data"));
+    command.env("XDG_CONFIG_HOME", dir.path().join("config"));
+    command.env("HOME", dir.path().join("home"));
+    TestCommand { _dir: dir, command }
 }
 
 // ── Help & basic CLI ──
@@ -261,7 +287,7 @@ fn projects_summarize_unknown_dir_fails() {
         .stderr(predicate::str::contains("No indexed sessions"));
 }
 
-// ── Tags & user projects ──
+// ── Tags & session names ──
 
 #[test]
 fn rename_unknown_session_fails() {

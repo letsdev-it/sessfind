@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use sessfind_common::{
     Capabilities, ProjectGroup, SearchMethods, SessionSummary, ToolInfo, chat_command,
-    new_session_command, resume_command,
+    new_session_command, resume_command, session_key,
 };
 
 use crate::indexer::engine::IndexEngine;
@@ -30,10 +30,13 @@ const FEATURES: &[&str] = &[
     "project-tags",
     "project-summaries",
     "project-chat",
+    "source-qualified-sessions",
+    "direct-session-tags",
 ];
 
 pub fn session_summary(r: &SearchResult) -> SessionSummary {
     SessionSummary {
+        session_key: session_key(r.source, &r.session_id),
         session_id: r.session_id.clone(),
         source: r.source,
         project: r.project.clone(),
@@ -41,6 +44,7 @@ pub fn session_summary(r: &SearchResult) -> SessionSummary {
         custom_name: None,
         timestamp: r.timestamp,
         snippet: r.snippet.clone(),
+        direct_tags: Vec::new(),
         tags: Vec::new(),
         resume: resume_command(r.source, &r.session_id, &r.project),
         new_session: new_session_command(r.source, &r.project),
@@ -92,7 +96,8 @@ pub fn sessions_list(
             store.sessions_with_tag(tag)?.into_iter().collect();
         let project_tags = store.project_tags_map()?;
         sessions.retain(|r| {
-            ids.contains(&r.session_id)
+            ids.contains(&session_key(r.source, &r.session_id))
+                || ids.contains(&r.session_id)
                 || project_tags
                     .get(&r.project)
                     .is_some_and(|tags| tags.contains(tag))
@@ -105,15 +110,20 @@ pub fn sessions_list(
 
     // Decorate with tags (direct + inherited from dir) and custom names,
     // each in one batch query.
-    let ids: Vec<String> = sessions.iter().map(|r| r.session_id.clone()).collect();
-    let mut tags_by_session = store.tags_for_sessions(&ids)?;
-    let mut names = store.names_for_sessions(&ids)?;
+    let refs: Vec<(String, String)> = sessions
+        .iter()
+        .map(|r| (session_key(r.source, &r.session_id), r.session_id.clone()))
+        .collect();
+    let mut tags_by_session = store.tags_for_sessions(&refs)?;
+    let mut names = store.names_for_sessions(&refs)?;
     let project_tags = store.project_tags_map()?;
     let summaries: Vec<SessionSummary> = sessions
         .iter()
         .map(|r| {
             let mut summary = session_summary(r);
-            let mut tags = tags_by_session.remove(&r.session_id).unwrap_or_default();
+            let key = session_key(r.source, &r.session_id);
+            let direct_tags = tags_by_session.remove(&key).unwrap_or_default();
+            let mut tags = direct_tags.clone();
             if let Some(inherited) = project_tags.get(&r.project) {
                 for tag in inherited {
                     if !tags.contains(tag) {
@@ -122,8 +132,9 @@ pub fn sessions_list(
                 }
                 tags.sort();
             }
+            summary.direct_tags = direct_tags;
             summary.tags = tags;
-            if let Some(name) = names.remove(&r.session_id) {
+            if let Some(name) = names.remove(&key) {
                 summary.title = Some(name.clone());
                 summary.custom_name = Some(name);
             }
@@ -251,7 +262,7 @@ pub fn print_search_results(results: &[SearchResult], limit: usize, json: bool) 
         let mut seen = std::collections::HashSet::new();
         results
             .iter()
-            .filter(|r| seen.insert(&r.session_id))
+            .filter(|r| seen.insert((r.source, &r.session_id)))
             .take(3)
             .collect()
     };
@@ -265,9 +276,10 @@ pub fn show(
     engine: &IndexEngine,
     store: &MetadataStore,
     session_id: &str,
+    source: Option<&str>,
     json: bool,
 ) -> Result<()> {
-    let chunks = engine.get_session_chunks(session_id)?;
+    let chunks = session_chunks(engine, session_id, source)?;
     if chunks.is_empty() {
         if json {
             anyhow::bail!("No session found with ID: {session_id}");
@@ -276,10 +288,12 @@ pub fn show(
         eprintln!("Tip: Use the full session ID from search results.");
         return Ok(());
     }
+    let key = session_key(chunks[0].source, session_id);
 
     if json {
         let mut summary = session_summary(&chunks[0]);
-        let mut tags = store.tags_for_session(session_id)?;
+        let direct_tags = store.tags_for_session(&key, session_id)?;
+        let mut tags = direct_tags.clone();
         if let Some(inherited) = store.project_tags_map()?.get(&summary.project) {
             for tag in inherited {
                 if !tags.contains(tag) {
@@ -288,10 +302,11 @@ pub fn show(
             }
             tags.sort();
         }
+        summary.direct_tags = direct_tags;
         summary.tags = tags;
         if let Some(name) = store
-            .names_for_sessions(&[session_id.to_string()])?
-            .remove(session_id)
+            .names_for_sessions(&[(key.clone(), session_id.to_string())])?
+            .remove(&key)
         {
             summary.title = Some(name.clone());
             summary.custom_name = Some(name);
@@ -487,13 +502,31 @@ pub fn tools_list(dir: Option<&str>, json: bool) -> Result<()> {
 // ── Project summaries & chat ──
 
 /// Sessions in the given directory, newest first; errors when empty.
-fn project_sessions(engine: &IndexEngine, dir: &str) -> Result<Vec<SearchResult>> {
-    let mut sessions = engine.list_sessions()?;
-    sessions.retain(|s| s.project == dir);
+fn project_sessions(engine: &IndexEngine, dir: &str) -> Result<(String, Vec<SearchResult>)> {
+    let sessions = engine.list_sessions()?;
+    let resolved = if sessions.iter().any(|s| s.project == dir) {
+        dir.to_string()
+    } else {
+        let canonical = std::fs::canonicalize(dir).ok();
+        sessions
+            .iter()
+            .map(|s| s.project.as_str())
+            .find(|project| {
+                canonical
+                    .as_ref()
+                    .is_some_and(|path| std::fs::canonicalize(project).ok().as_ref() == Some(path))
+            })
+            .map(str::to_string)
+            .unwrap_or_else(|| dir.to_string())
+    };
+    let sessions: Vec<SearchResult> = sessions
+        .into_iter()
+        .filter(|s| s.project == resolved)
+        .collect();
     if sessions.is_empty() {
         anyhow::bail!("No indexed sessions in {dir}");
     }
-    Ok(sessions)
+    Ok((resolved, sessions))
 }
 
 /// Prompt asking an LLM to describe what the project is about, based on
@@ -534,7 +567,7 @@ pub fn projects_summarize(
     tool: Option<&str>,
     json: bool,
 ) -> Result<()> {
-    let sessions = project_sessions(engine, dir)?;
+    let (dir, sessions) = project_sessions(engine, dir)?;
 
     let backends = llm::detect_backends();
     let backend = match tool {
@@ -551,19 +584,22 @@ pub fn projects_summarize(
     let samples: Vec<String> = sessions
         .iter()
         .take(5)
-        .filter_map(|s| engine.get_session_chunks(&s.session_id).ok())
+        .filter_map(|s| session_chunks(engine, &s.session_id, Some(s.source.as_str())).ok())
         .filter_map(|chunks| chunks.first().map(|c| truncate_str(&c.snippet, 800)))
         .collect();
 
-    eprintln!("Summarizing {dir} with {}…", backend.display());
-    let prompt = build_summary_prompt(dir, &sessions, &samples);
+    eprintln!(
+        "Summarizing {dir} with {}… Sending session titles and excerpts from up to five recent conversations to this provider.",
+        backend.display()
+    );
+    let prompt = build_summary_prompt(&dir, &sessions, &samples);
     let description = llm::invoke_with_budget(backend, &prompt, 0.50)?
         .trim()
         .to_string();
     if description.is_empty() {
         anyhow::bail!("LLM returned an empty summary");
     }
-    store.set_project_description(dir, &description, &backend.name)?;
+    store.set_project_description(&dir, &description, &backend.name)?;
 
     if json {
         println!(
@@ -624,23 +660,23 @@ pub fn projects_chat(
     tool: Option<&str>,
     json: bool,
 ) -> Result<()> {
-    let sessions = project_sessions(engine, dir)?;
+    let (dir, sessions) = project_sessions(engine, dir)?;
     let tags = store
         .project_tags_map()?
-        .get(dir)
+        .get(&dir)
         .cloned()
         .unwrap_or_default();
     let descriptions = store.project_descriptions_map()?;
     let brief = build_project_brief(
-        dir,
+        &dir,
         &sessions,
         &tags,
-        descriptions.get(dir).map(|s| s.as_str()),
+        descriptions.get(&dir).map(|s| s.as_str()),
     );
 
     let chat_tools: Vec<Source> = installed_tools()
         .into_iter()
-        .filter(|s| chat_command(*s, dir, "").is_some())
+        .filter(|s| chat_command(*s, &dir, "").is_some())
         .collect();
     let source = match tool {
         Some(name) => {
@@ -660,7 +696,7 @@ pub fn projects_chat(
             .ok_or_else(|| anyhow::anyhow!("No chat-capable AI CLI tools found on PATH"))?,
     };
 
-    let spec = chat_command(source, dir, &brief).expect("source filtered to chat-capable above");
+    let spec = chat_command(source, &dir, &brief).expect("source filtered to chat-capable above");
     if json {
         println!("{}", serde_json::to_string(&spec)?);
     } else {
@@ -671,32 +707,98 @@ pub fn projects_chat(
 
 // ── Tags ──
 
-/// Guard against tagging a session that isn't indexed (would orphan the row).
-fn ensure_session_exists(engine: &IndexEngine, session_id: &str) -> Result<()> {
-    if engine.get_session_chunks(session_id)?.is_empty() {
-        anyhow::bail!("No indexed session with ID: {session_id}");
+fn session_chunks(
+    engine: &IndexEngine,
+    session_id: &str,
+    source: Option<&str>,
+) -> Result<Vec<SearchResult>> {
+    let mut sources: Vec<Source> = engine
+        .list_sessions()?
+        .into_iter()
+        .filter(|session| session.session_id == session_id)
+        .map(|session| session.source)
+        .collect();
+    sources.sort_by_key(|source| source.as_str());
+    sources.dedup();
+
+    let selected = if let Some(source) = source {
+        Some(
+            Source::parse_source(source)
+                .ok_or_else(|| anyhow::anyhow!("Unknown source: {source}"))?,
+        )
+    } else if sources.len() > 1 {
+        let names: Vec<&str> = sources.iter().map(Source::as_str).collect();
+        anyhow::bail!(
+            "Session ID {session_id} exists in multiple sources ({}); pass --source",
+            names.join(", ")
+        );
+    } else {
+        sources.first().copied()
+    };
+
+    let mut chunks = engine.get_session_chunks(session_id)?;
+    if let Some(source) = selected {
+        chunks.retain(|chunk| chunk.source == source);
     }
-    Ok(())
+    Ok(chunks)
+}
+
+fn resolve_session(
+    engine: &IndexEngine,
+    session_id: &str,
+    source: Option<&str>,
+) -> Result<(Source, String)> {
+    let chunks = session_chunks(engine, session_id, source)?;
+    let Some(first) = chunks.first() else {
+        anyhow::bail!("No indexed session with ID: {session_id}");
+    };
+    Ok((first.source, session_key(first.source, session_id)))
+}
+
+fn migrate_session_metadata(
+    engine: &IndexEngine,
+    store: &MetadataStore,
+    session_id: &str,
+) -> Result<()> {
+    let mut keys: Vec<String> = engine
+        .list_sessions()?
+        .into_iter()
+        .filter(|session| session.session_id == session_id)
+        .map(|session| session_key(session.source, session_id))
+        .collect();
+    keys.sort();
+    keys.dedup();
+    store.migrate_legacy_session(session_id, &keys)
 }
 
 pub fn tag_add(
     engine: &IndexEngine,
     store: &MetadataStore,
     session_id: &str,
+    source: Option<&str>,
     tags: &[String],
 ) -> Result<()> {
-    ensure_session_exists(engine, session_id)?;
+    let (_, key) = resolve_session(engine, session_id, source)?;
+    migrate_session_metadata(engine, store, session_id)?;
     for tag in tags {
-        store.add_tag(session_id, tag)?;
+        store.add_tag(&key, tag)?;
     }
     println!("Tagged {session_id} with: {}", tags.join(", "));
     Ok(())
 }
 
-pub fn tag_rm(store: &MetadataStore, session_id: &str, tags: &[String]) -> Result<()> {
+pub fn tag_rm(
+    engine: &IndexEngine,
+    store: &MetadataStore,
+    session_id: &str,
+    source: Option<&str>,
+    tags: &[String],
+) -> Result<()> {
+    let (_, key) = resolve_session(engine, session_id, source)?;
+    migrate_session_metadata(engine, store, session_id)?;
     let mut removed = Vec::new();
     for tag in tags {
-        if store.remove_tag(session_id, tag)? {
+        if store.remove_tag(&key, session_id, tag)? {
             removed.push(tag.clone());
         }
     }
@@ -708,8 +810,36 @@ pub fn tag_rm(store: &MetadataStore, session_id: &str, tags: &[String]) -> Resul
     Ok(())
 }
 
-pub fn tag_list(store: &MetadataStore, json: bool) -> Result<()> {
-    let tags = store.list_tags()?;
+pub fn tag_list(engine: &IndexEngine, store: &MetadataStore, json: bool) -> Result<()> {
+    let sessions = engine.list_sessions()?;
+    let refs: Vec<(String, String)> = sessions
+        .iter()
+        .map(|s| (session_key(s.source, &s.session_id), s.session_id.clone()))
+        .collect();
+    let direct = store.tags_for_sessions(&refs)?;
+    let project_tags = store.project_tags_map()?;
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for session in &sessions {
+        let key = session_key(session.source, &session.session_id);
+        let mut effective = direct.get(&key).cloned().unwrap_or_default();
+        if let Some(inherited) = project_tags.get(&session.project) {
+            effective.extend(inherited.iter().cloned());
+        }
+        effective.sort();
+        effective.dedup();
+        for tag in effective {
+            *counts.entry(tag).or_default() += 1;
+        }
+    }
+    let mut tags: Vec<sessfind_common::TagCount> = counts
+        .into_iter()
+        .map(|(tag, session_count)| sessfind_common::TagCount { tag, session_count })
+        .collect();
+    tags.sort_by(|a, b| {
+        b.session_count
+            .cmp(&a.session_count)
+            .then_with(|| a.tag.cmp(&b.tag))
+    });
     if json {
         println!("{}", serde_json::to_string(&tags)?);
         return Ok(());
@@ -726,18 +856,30 @@ pub fn tag_list(store: &MetadataStore, json: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn tag_add_project(store: &MetadataStore, dir: &str, tags: &[String]) -> Result<()> {
+pub fn tag_add_project(
+    engine: &IndexEngine,
+    store: &MetadataStore,
+    dir: &str,
+    tags: &[String],
+) -> Result<()> {
+    let (dir, _) = project_sessions(engine, dir)?;
     for tag in tags {
-        store.add_project_tag(dir, tag)?;
+        store.add_project_tag(&dir, tag)?;
     }
     println!("Tagged directory {dir} with: {}", tags.join(", "));
     Ok(())
 }
 
-pub fn tag_rm_project(store: &MetadataStore, dir: &str, tags: &[String]) -> Result<()> {
+pub fn tag_rm_project(
+    engine: &IndexEngine,
+    store: &MetadataStore,
+    dir: &str,
+    tags: &[String],
+) -> Result<()> {
+    let (dir, _) = project_sessions(engine, dir)?;
     let mut removed = Vec::new();
     for tag in tags {
-        if store.remove_project_tag(dir, tag)? {
+        if store.remove_project_tag(&dir, tag)? {
             removed.push(tag.clone());
         }
     }
@@ -755,16 +897,18 @@ pub fn session_rename(
     engine: &IndexEngine,
     store: &MetadataStore,
     session_id: &str,
+    source: Option<&str>,
     name: Option<&str>,
 ) -> Result<()> {
+    let (_, key) = resolve_session(engine, session_id, source)?;
+    migrate_session_metadata(engine, store, session_id)?;
     match name {
         Some(name) if !name.trim().is_empty() => {
-            ensure_session_exists(engine, session_id)?;
-            store.set_session_name(session_id, name.trim())?;
+            store.set_session_name(&key, name.trim())?;
             println!("Renamed {session_id} to: {}", name.trim());
         }
         _ => {
-            if store.clear_session_name(session_id)? {
+            if store.clear_session_name(&key, session_id)? {
                 println!("Cleared custom name of {session_id}");
             } else {
                 println!("No custom name set for {session_id}");

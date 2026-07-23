@@ -2,12 +2,8 @@ import type { SessionSummary, Source } from "../sessfind/types";
 
 export interface ProjectDetailsInput {
   title: string;
-  kind: "auto" | "user";
-  /** Root (user project) or the grouped directory (auto project). */
+  /** Directory used to derive the project. */
   rootDir: string;
-  /** Extra directories (user projects only). */
-  dirs: string[];
-  pinnedSessions: string[];
   description: string | null;
   /** Tags attached to the project directory itself. */
   tags?: string[];
@@ -28,16 +24,8 @@ export function renderProject(input: ProjectDetailsInput): string {
   }
 
   lines.push("## Overview", "");
-  lines.push(
-    `- **Kind:** ${input.kind === "user" ? "user project" : "auto project (grouped by directory)"}`,
-  );
+  lines.push("- **Kind:** project grouped by directory");
   lines.push(`- **Root:** \`${input.rootDir}\``);
-  for (const dir of input.dirs) {
-    lines.push(`- **Extra dir:** \`${dir}\``);
-  }
-  if (input.pinnedSessions.length > 0) {
-    lines.push(`- **Pinned sessions:** ${input.pinnedSessions.length}`);
-  }
   if ((input.tags ?? []).length > 0) {
     lines.push(
       `- **Project tags:** ${(input.tags ?? []).map((t) => `\`${t}\``).join(", ")}`,

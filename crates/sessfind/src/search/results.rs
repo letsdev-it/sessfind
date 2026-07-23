@@ -55,9 +55,9 @@ pub fn apply_sort(results: &mut [SearchResult], order: SortOrder) {
 /// Dedup by session, keeping the highest-scoring result per session.
 /// Final results sorted according to the given sort order.
 pub fn dedup_by_session(results: &[SearchResult], order: SortOrder) -> Vec<SearchResult> {
-    let mut best: HashMap<String, SearchResult> = HashMap::new();
+    let mut best: HashMap<(crate::models::Source, String), SearchResult> = HashMap::new();
     for r in results {
-        best.entry(r.session_id.clone())
+        best.entry((r.source, r.session_id.clone()))
             .and_modify(|existing| {
                 if r.score > existing.score {
                     *existing = r.clone();
@@ -122,6 +122,28 @@ mod tests {
     fn dedup_empty() {
         let deduped = dedup_by_session(&[], SortOrder::ScoreDesc);
         assert!(deduped.is_empty());
+    }
+
+    #[test]
+    fn dedup_keeps_equal_native_ids_from_different_sources() {
+        let ts = Utc::now();
+        let base = SearchResult {
+            chunk_id: "claude:same:0".into(),
+            session_id: "same".into(),
+            source: Source::ClaudeCode,
+            project: "/p".into(),
+            timestamp: ts,
+            title: None,
+            snippet: "claude".into(),
+            score: 1.0,
+        };
+        let mut other = base.clone();
+        other.chunk_id = "codex:same:0".into();
+        other.source = Source::Codex;
+        other.snippet = "codex".into();
+
+        let deduped = dedup_by_session(&[base, other], SortOrder::ScoreDesc);
+        assert_eq!(deduped.len(), 2);
     }
 
     #[test]

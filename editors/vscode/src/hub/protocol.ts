@@ -5,13 +5,14 @@ import type {
   ProjectGroup,
   SearchMethod,
   SessionSummary,
+  Source,
 } from "../sessfind/types";
 
 export type ViewMode = "list" | "tree";
 
 /** One ranked engine match: the session and the best snippet found in it. */
 export interface RankedMatch {
-  session_id: string;
+  session_key: string;
   snippet: string;
 }
 
@@ -31,9 +32,12 @@ export interface HubState {
   sessions: SessionSummary[];
   projects: ProjectGroup[];
   methods: SearchMethod[];
+  defaultMethod: SearchMethod;
+  features: string[];
   viewMode: ViewMode;
   filter: FilterPayload | null;
   busy: boolean;
+  searchError: string | null;
   /** Non-null when the binary is unavailable/incompatible; UI shows it. */
   error: string | null;
 }
@@ -41,21 +45,27 @@ export interface HubState {
 export type WebToExt =
   | { type: "ready" }
   | { type: "query"; value: string; method: SearchMethod }
-  | { type: "open"; sessionId: string; title: string | null }
+  | { type: "open"; sessionId: string; source: Source; title: string | null }
   | { type: "openProject"; path: string }
-  | { type: "resume"; sessionId: string }
-  | { type: "newSession"; dir: string; sessionId?: string }
-  | { type: "rename"; sessionId: string }
-  | { type: "addTag"; kind: "session" | "project"; id: string; label: string }
+  | { type: "resume"; sessionId: string; source: Source }
+  | { type: "newSession"; dir: string; sessionId?: string; source?: Source }
+  | { type: "rename"; sessionId: string; source: Source }
+  | {
+      type: "addTag";
+      kind: "session" | "project";
+      id: string;
+      label: string;
+      source?: Source;
+    }
   | {
       type: "removeTag";
       kind: "session" | "project";
       id: string;
       label: string;
       tags: string[];
+      source?: Source;
     }
   | { type: "setViewMode"; mode: ViewMode }
-  | { type: "summarize"; path: string; label: string }
   | { type: "chat"; dir: string }
   | { type: "stats" }
   | { type: "refresh" }

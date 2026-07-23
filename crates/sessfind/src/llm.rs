@@ -1,6 +1,9 @@
 use std::path::PathBuf;
+use std::process::Stdio;
+use std::time::Duration;
 
 use anyhow::Result;
+use wait_timeout::ChildExt;
 
 use crate::config::Config;
 use crate::indexer::engine::{IndexEngine, SearchParams};
@@ -173,12 +176,54 @@ pub fn invoke_with_budget(backend: &LlmBackend, prompt: &str, budget_usd: f64) -
         _ => {}
     }
 
-    let output = cmd.output()?;
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn()?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("failed to capture LLM stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("failed to capture LLM stderr"))?;
+    let stdout_reader = std::thread::spawn(move || {
+        let mut reader = stdout;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut reader, &mut bytes).map(|_| bytes)
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut reader = stderr;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut reader, &mut bytes).map(|_| bytes)
+    });
 
-    if !output.status.success() {
+    let status = match child.wait_timeout(Duration::from_secs(180)) {
+        Ok(Some(status)) => Some(status),
+        Ok(None) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            None
+        }
+        Err(err) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(err.into());
+        }
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("LLM stdout reader panicked"))??;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("LLM stderr reader panicked"))??;
+    let Some(status) = status else {
+        anyhow::bail!("LLM invocation via {} timed out after 180s", backend.name);
+    };
+
+    if !status.success() {
         // Some tools (claude among them) print errors on stdout.
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&stderr);
+        let stdout = String::from_utf8_lossy(&stdout);
         let detail = if stderr.trim().is_empty() {
             stdout
         } else {
@@ -191,7 +236,7 @@ pub fn invoke_with_budget(backend: &LlmBackend, prompt: &str, budget_usd: f64) -
         );
     }
 
-    let stdout = String::from_utf8(output.stdout)?;
+    let stdout = String::from_utf8(stdout)?;
     Ok(stdout)
 }
 

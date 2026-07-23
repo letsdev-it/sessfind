@@ -142,6 +142,14 @@ pub fn new_session_command(source: Source, dir: &str) -> CommandSpec {
     }
 }
 
+/// Stable identity used by sessfind-owned metadata and frontends.
+///
+/// Native session ids are only unique within their owning tool, so every
+/// sessfind-owned reference must include the source as well.
+pub fn session_key(source: Source, session_id: &str) -> String {
+    format!("{}:{session_id}", source.as_str())
+}
+
 // ── JSON API types (consumed by the VS Code extension and future frontends) ──
 //
 // Evolution contract: changes to these types must be additive-only. Breaking
@@ -150,6 +158,9 @@ pub fn new_session_command(source: Source, dir: &str) -> CommandSpec {
 /// One indexed session, as listed by `sessfind sessions list --json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSummary {
+    /// Source-qualified stable identity (`<source>:<native session id>`).
+    #[serde(default)]
+    pub session_key: String,
     pub session_id: String,
     pub source: Source,
     /// Absolute directory path the session ran in (drives grouping and resume cwd).
@@ -161,6 +172,10 @@ pub struct SessionSummary {
     pub custom_name: Option<String>,
     pub timestamp: DateTime<Utc>,
     pub snippet: String,
+    /// Tags attached directly to this session (excludes inherited project tags).
+    #[serde(default)]
+    pub direct_tags: Vec<String>,
+    /// Effective tags: direct tags plus tags inherited from the project.
     #[serde(default)]
     pub tags: Vec<String>,
     pub resume: CommandSpec,
@@ -386,6 +401,7 @@ mod tests {
     #[test]
     fn session_summary_serde_roundtrip() {
         let summary = SessionSummary {
+            session_key: "claude:abc".into(),
             session_id: "abc".into(),
             source: Source::ClaudeCode,
             project: "/home/user/project".into(),
@@ -393,6 +409,7 @@ mod tests {
             custom_name: None,
             timestamp: Utc::now(),
             snippet: "USER: hello".into(),
+            direct_tags: vec!["work".into()],
             tags: vec!["work".into()],
             resume: resume_command(Source::ClaudeCode, "abc", "/home/user/project"),
             new_session: new_session_command(Source::ClaudeCode, "/home/user/project"),
@@ -415,6 +432,8 @@ mod tests {
         }"#;
         let back: SessionSummary = serde_json::from_str(json).unwrap();
         assert!(back.tags.is_empty());
+        assert!(back.direct_tags.is_empty());
+        assert!(back.session_key.is_empty());
         assert!(back.custom_name.is_none());
     }
 

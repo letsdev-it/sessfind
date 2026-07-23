@@ -12,13 +12,12 @@ out to the binary and renders its JSON.
 
 ## Features
 
-- **Projects** view: sessions auto-grouped by directory.
-- **My Projects** view: user-defined projects (a root directory plus extra
-  directories and pinned sessions). Create them, add directories, pin sessions.
-- **Tags** view: organise sessions with your own tags.
-- **Search Sessions** command: full-text, fuzzy, semantic and LLM search (only
-  the methods your binary supports are offered). Instant methods search as you
-  type; semantic/LLM run on Enter.
+- One sidebar hub with recent sessions, projects grouped by directory, and
+  effective session/project tags.
+- Full-text, fuzzy, semantic and LLM search (only methods advertised by the
+  installed binary are shown). Instant methods search as you type;
+  semantic/LLM run on Enter.
+- Rename sessions, tag sessions or directories, and inspect project statistics.
 - Open any session as a rendered Markdown conversation in a tab.
 - Resume a session, or start a new session in its project directory, in an
   integrated terminal.
@@ -43,3 +42,17 @@ npm run package    # produce a .vsix
 Press <kbd>F5</kbd> to launch an Extension Development Host. Point
 `sessfind.binaryPath` at `../../target/debug/sessfind` to test against a local
 build.
+
+## Publishing
+
+Publishing is handled by `.github/workflows/vscode.yml`. It uses the exact VSIX
+produced by the tested build job. Release automation mirrors the Cargo
+`release-plz` flow: conventional commits affecting the CLI or extension update
+a release PR, and merging that PR creates a `vscode-v<version>` GitHub Release.
+That release is then published automatically to the Marketplace. Ordinary pull
+requests and pushes only build and test.
+
+Configure a GitHub Actions secret named `VSCE_PAT` with an Azure DevOps token
+that has the Marketplace **Manage** scope. The publish job targets the
+`vscode-marketplace` GitHub environment, so environment protection rules can be
+added without changing the workflow.

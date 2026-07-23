@@ -15,6 +15,9 @@ export const PROJECT_SCHEME = "sessfind-project";
 export class ProjectDocumentProvider
   implements vscode.TextDocumentContentProvider
 {
+  private readonly emitter = new vscode.EventEmitter<vscode.Uri>();
+  readonly onDidChange = this.emitter.event;
+
   constructor(private readonly client: SessfindClient) {}
 
   static uriForAuto(path: string): vscode.Uri {
@@ -24,6 +27,10 @@ export class ProjectDocumentProvider
       path: `/${lastSegment(path)}.md`,
       query: encoded,
     });
+  }
+
+  invalidate(path: string): void {
+    this.emitter.fire(ProjectDocumentProvider.uriForAuto(path));
   }
 
   async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
@@ -41,10 +48,7 @@ export class ProjectDocumentProvider
     const group = projects.find((p) => p.path === path);
     const base = renderProject({
       title: lastSegment(path),
-      kind: "auto",
       rootDir: path,
-      dirs: [],
-      pinnedSessions: [],
       description: group?.description ?? null,
       tags: group?.tags ?? [],
       sessions: sessions.filter((s) => s.project === path),

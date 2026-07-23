@@ -23,7 +23,7 @@ describe("sessionMatchesFilter", () => {
   });
 
   it("matches engine-provided ids regardless of text", () => {
-    const f = { query: "zzz", engineIds: new Set(["s1"]) };
+    const f = { query: "zzz", engineIds: new Set(["claude:s1"]) };
     expect(sessionMatchesFilter(session({}), f)).toBe(true);
   });
 
@@ -53,7 +53,11 @@ describe("sessionMatchesFilter", () => {
   });
 
   it("engineOnly ignores substring matches", () => {
-    const f = { query: "auth", engineIds: new Set(["other"]), engineOnly: true };
+    const f = {
+      query: "auth",
+      engineIds: new Set(["claude:other"]),
+      engineOnly: true,
+    };
     // "auth" appears in the title, but engineOnly filters demand an id match.
     expect(sessionMatchesFilter(session({}), f)).toBe(false);
     expect(

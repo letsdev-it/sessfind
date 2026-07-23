@@ -83,6 +83,9 @@ enum Commands {
     Show {
         /// Session ID (from search results)
         session_id: String,
+        /// Source owning the session (required only if native ids collide)
+        #[arg(long, short = 's')]
+        source: Option<String>,
         /// Output session as JSON
         #[arg(long)]
         json: bool,
@@ -164,6 +167,9 @@ enum SessionsAction {
     /// Set or clear a custom display name for a session
     Rename {
         session_id: String,
+        /// Source owning the session (required only if native ids collide)
+        #[arg(long, short = 's')]
+        source: Option<String>,
         /// The new name (omit together with --clear to remove the override)
         name: Option<String>,
         /// Remove the custom name
@@ -220,12 +226,18 @@ enum TagAction {
     /// Add one or more tags to a session
     Add {
         session_id: String,
+        /// Source owning the session (required only if native ids collide)
+        #[arg(long, short = 's')]
+        source: Option<String>,
         #[arg(required = true)]
         tags: Vec<String>,
     },
     /// Remove one or more tags from a session
     Rm {
         session_id: String,
+        /// Source owning the session (required only if native ids collide)
+        #[arg(long, short = 's')]
+        source: Option<String>,
         #[arg(required = true)]
         tags: Vec<String>,
     },
@@ -412,10 +424,14 @@ fn main() -> Result<()> {
 
             commands::print_search_results(&results, limit, json)?;
         }
-        Commands::Show { session_id, json } => {
+        Commands::Show {
+            session_id,
+            source,
+            json,
+        } => {
             let engine = open_engine()?;
             let store = open_metadata()?;
-            commands::show(&engine, &store, &session_id, json)?;
+            commands::show(&engine, &store, &session_id, source.as_deref(), json)?;
         }
         Commands::DumpChunks => {
             let engine = open_engine()?;
@@ -463,13 +479,20 @@ fn main() -> Result<()> {
             }
             SessionsAction::Rename {
                 session_id,
+                source,
                 name,
                 clear,
             } => {
                 let engine = open_engine()?;
                 let store = open_metadata()?;
                 let name = if clear { None } else { name };
-                commands::session_rename(&engine, &store, &session_id, name.as_deref())?;
+                commands::session_rename(
+                    &engine,
+                    &store,
+                    &session_id,
+                    source.as_deref(),
+                    name.as_deref(),
+                )?;
             }
         },
         Commands::Projects { action } => match action {
@@ -497,21 +520,33 @@ fn main() -> Result<()> {
         Commands::Tag { action } => {
             let store = open_metadata()?;
             match action {
-                TagAction::Add { session_id, tags } => {
+                TagAction::Add {
+                    session_id,
+                    source,
+                    tags,
+                } => {
                     let engine = open_engine()?;
-                    commands::tag_add(&engine, &store, &session_id, &tags)?;
+                    commands::tag_add(&engine, &store, &session_id, source.as_deref(), &tags)?;
                 }
-                TagAction::Rm { session_id, tags } => {
-                    commands::tag_rm(&store, &session_id, &tags)?;
+                TagAction::Rm {
+                    session_id,
+                    source,
+                    tags,
+                } => {
+                    let engine = open_engine()?;
+                    commands::tag_rm(&engine, &store, &session_id, source.as_deref(), &tags)?;
                 }
                 TagAction::List { json } => {
-                    commands::tag_list(&store, json)?;
+                    let engine = open_engine()?;
+                    commands::tag_list(&engine, &store, json)?;
                 }
                 TagAction::AddProject { dir, tags } => {
-                    commands::tag_add_project(&store, &dir, &tags)?;
+                    let engine = open_engine()?;
+                    commands::tag_add_project(&engine, &store, &dir, &tags)?;
                 }
                 TagAction::RmProject { dir, tags } => {
-                    commands::tag_rm_project(&store, &dir, &tags)?;
+                    let engine = open_engine()?;
+                    commands::tag_rm_project(&engine, &store, &dir, &tags)?;
                 }
             }
         }

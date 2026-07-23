@@ -41,9 +41,6 @@ actions on every row.
   node lists tagged projects first, then individually tagged sessions.
 - **Rename** — give any session a custom name; it shows in the trees, in
   search, and as the preview tab title.
-- **Project summaries (LLM)** — the ✨ action asks a detected backend
-  (claude/opencode/copilot) to describe the project from its sessions; the
-  summary shows in the project tooltip and details page.
 - **Chat about a project** — the 💬 action opens claude/opencode/codex in the
   project root with the context pre-loaded (description, tags, recent
   sessions with ids, and hints to query sessfind for details).
@@ -66,9 +63,10 @@ actions on every row.
 - **Filter** — a filter across all three views: type a query and only matching
   sessions (full-content search plus title/path/tag substrings) stay visible;
   project and tag counts are recomputed from the matches.
-- **Search Sessions** — full-text, fuzzy, semantic and LLM search from a
-  QuickPick. Only the methods your binary reports are offered; instant methods
-  search as you type, semantic/LLM run on Enter.
+- **Search methods** — full-text, fuzzy, semantic and LLM search from chips in
+  the hub. Only methods your binary reports are offered; instant methods search
+  as you type, semantic/LLM run on Enter. Starting a newer search cancels the
+  previous process, and failures are shown in the search status.
 - **Session preview** — open any session as a rendered Markdown conversation.
 - **Resume / new session** — resume in an integrated terminal in the session's
   project directory; starting a new session asks which installed tool to use
@@ -82,14 +80,11 @@ actions on every row.
 | `sessfind.searchLimit` | `50` | Max search results to fetch. |
 | `sessfind.defaultSearchMethod` | `fts` | Default search method. |
 
+When a terminal does not report shell integration after ten seconds, the
+extension asks before typing the resume/new-session command. This avoids sending
+commands into shell startup prompts.
+
 ## Roadmap
 
-The extension is the first step of a broader "session hub". Planned:
-
-- LLM-generated project summaries (in the background, using a detected backend).
-- A statistics dashboard and a richer conversation viewer (webview).
-- Git / PR history per project.
-- `sessfind serve` — launch a browser-based VS Code (`code serve-web`, falling
-  back to a downloaded open-source server) for users without VS Code installed.
 - Marketplace + Open VSX publishing.
 - A dedicated standalone web UI built on the same JSON layer.

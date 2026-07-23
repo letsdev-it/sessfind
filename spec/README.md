@@ -12,7 +12,7 @@ spec document in the same pull request as architectural code changes.
 
 ## Architecture
 
-_To be defined._
+- [VS Code extension and JSON API](vscode-extension.md)
 
 ## Stack and dependencies
 
@@ -20,7 +20,11 @@ _To be defined._
 
 ## Data and interfaces
 
-_To be defined._
+- The CLI is the system boundary for frontends. Machine-readable clients first
+  inspect `sessfind capabilities`, then consume additive JSON shapes from
+  `sessfind-common`.
+- Native session IDs are source-scoped. Persistent metadata and frontend state
+  use `<source>:<session_id>` as the stable identity.
 
 ## Development and operations
 

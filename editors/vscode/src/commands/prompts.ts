@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { SessfindClient, SessfindError } from "../sessfind/client";
-import type { SessionSummary } from "../sessfind/types";
+import type { SessionSummary, Source } from "../sessfind/types";
 import { splitTags } from "../util/parseTags";
 
 /**
@@ -13,6 +13,7 @@ export async function promptAddTag(
   kind: "session" | "project",
   id: string,
   label: string,
+  source?: Source,
 ): Promise<boolean> {
   const input = await vscode.window.showInputBox({
     prompt: `Tags to add to ${label} (comma or space separated)`,
@@ -24,7 +25,10 @@ export async function promptAddTag(
   }
   return guard(async () => {
     if (kind === "session") {
-      await client.tagAdd(id, tags);
+      if (!source) {
+        throw new Error("missing session source");
+      }
+      await client.tagAdd(id, source, tags);
     } else {
       await client.projectTagAdd(id, tags);
     }
@@ -37,6 +41,7 @@ export async function promptRemoveTag(
   id: string,
   label: string,
   tags: string[],
+  source?: Source,
 ): Promise<boolean> {
   if (tags.length === 0) {
     vscode.window.showInformationMessage(`${label} has no tags to remove.`);
@@ -51,7 +56,10 @@ export async function promptRemoveTag(
   }
   return guard(async () => {
     if (kind === "session") {
-      await client.tagRemove(id, picked);
+      if (!source) {
+        throw new Error("missing session source");
+      }
+      await client.tagRemove(id, source, picked);
     } else {
       await client.projectTagRemove(id, picked);
     }
@@ -73,6 +81,7 @@ export async function promptRename(
   return guard(() =>
     client.sessionRename(
       session.session_id,
+      session.source,
       trimmed.length === 0 ? null : trimmed,
     ),
   );

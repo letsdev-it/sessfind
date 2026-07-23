@@ -18,31 +18,23 @@ function session(over: Partial<SessionSummary>): SessionSummary {
 }
 
 describe("renderProject", () => {
-  it("renders metadata for a user project", () => {
+  it("renders project metadata", () => {
     const md = renderProject({
       title: "backend",
-      kind: "user",
       rootDir: "/home/me/backend",
-      dirs: ["/home/me/shared"],
-      pinnedSessions: ["x"],
       description: "The API service.",
       sessions: [],
     });
     expect(md).toContain("# backend");
     expect(md).toContain("The API service.");
     expect(md).toContain("`/home/me/backend`");
-    expect(md).toContain("**Extra dir:** `/home/me/shared`");
-    expect(md).toContain("**Pinned sessions:** 1");
     expect(md).toContain("**Sessions:** 0");
   });
 
   it("computes metrics from sessions", () => {
     const md = renderProject({
       title: "proj",
-      kind: "auto",
       rootDir: "/p",
-      dirs: [],
-      pinnedSessions: [],
       description: null,
       sessions: [
         session({
@@ -71,10 +63,7 @@ describe("renderProject", () => {
   it("escapes pipes in titles inside the table", () => {
     const md = renderProject({
       title: "p",
-      kind: "auto",
       rootDir: "/p",
-      dirs: [],
-      pinnedSessions: [],
       description: null,
       sessions: [session({ title: "a | b" })],
     });

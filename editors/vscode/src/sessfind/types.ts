@@ -13,6 +13,8 @@ export interface CommandSpec {
 }
 
 export interface SessionSummary {
+  /** Stable source-qualified identity; absent only with older compatible binaries. */
+  session_key?: string;
   session_id: string;
   source: Source;
   project: string;
@@ -22,6 +24,8 @@ export interface SessionSummary {
   custom_name?: string | null;
   timestamp: string;
   snippet: string;
+  /** Tags attached directly to this session, excluding inherited project tags. */
+  direct_tags?: string[];
   /** Effective tags: direct plus inherited from the project directory. */
   tags: string[];
   resume: CommandSpec;
@@ -84,3 +88,9 @@ export interface SessionDetail {
 }
 
 export type SearchMethod = "fts" | "fuzzy" | "semantic" | "llm";
+
+export function sessionKey(
+  session: Pick<SessionSummary, "session_key" | "source" | "session_id">,
+): string {
+  return session.session_key || `${session.source}:${session.session_id}`;
+}

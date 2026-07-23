@@ -2969,6 +2969,7 @@ dependencies = [
  "tempfile",
  "unicode-width 0.2.0",
  "ureq 3.3.0",
+ "wait-timeout",
  "walkdir",
  "which",
 ]

@@ -6,4 +6,5 @@ tsconfig.json
 vitest.config.ts
 **/*.test.ts
 **/*.map
+version.txt
 .gitignore

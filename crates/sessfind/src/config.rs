@@ -5,9 +5,19 @@ use serde::{Deserialize, Serialize};
 
 pub use sessfind_common::CHUNK_MAX_CHARS;
 pub use sessfind_common::CHUNK_MIN_CHARS;
-pub use sessfind_common::data_dir;
 
-/// Path to the user-metadata DB (tags, user projects): <data_dir>/metadata.db
+/// Root for the index and sessfind-owned metadata.
+///
+/// `SESSFIND_DATA_DIR` is intentionally supported for hermetic tests and
+/// isolated frontend environments; normal users get the platform data dir.
+pub fn data_dir() -> PathBuf {
+    std::env::var_os("SESSFIND_DATA_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(sessfind_common::data_dir)
+}
+
+/// Path to the user-metadata DB (names and tags): <data_dir>/metadata.db
 pub fn metadata_db_path() -> PathBuf {
     data_dir().join("metadata.db")
 }

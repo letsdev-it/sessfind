@@ -3,7 +3,11 @@
 // hierarchy, tag groups). No `vscode` or DOM imports — unit-testable.
 
 import { applyFilter, type SessionFilter } from "../state/filter";
-import type { ProjectGroup, SessionSummary } from "../sessfind/types";
+import {
+  sessionKey,
+  type ProjectGroup,
+  type SessionSummary,
+} from "../sessfind/types";
 import { buildDirTree, isProjectLeaf, type DirNode } from "../views/dirTree";
 import { countTags, groupSessions } from "../views/grouping";
 import { tagChildren } from "../views/tagIndex";
@@ -62,7 +66,7 @@ export function buildModel(state: HubState): HubModel {
   const filter = toFilter(state);
   const sessions = applyFilter(state.sessions, filter);
 
-  const byId = new Map(state.sessions.map((s) => [s.session_id, s]));
+  const byId = new Map(state.sessions.map((s) => [sessionKey(s), s]));
 
   // Ranked results: engine matches in rank order, each mapped to the session
   // (which carries tags/name). Sessions matched only by substring append after.
@@ -70,14 +74,14 @@ export function buildModel(state: HubState): HubModel {
   if (state.filter) {
     const placed = new Set<string>();
     for (const m of state.filter.matches) {
-      const session = byId.get(m.session_id);
+      const session = byId.get(m.session_key);
       if (session) {
         results.push({ session, snippet: m.snippet });
-        placed.add(m.session_id);
+        placed.add(m.session_key);
       }
     }
     for (const s of sessions) {
-      if (!placed.has(s.session_id)) {
+      if (!placed.has(sessionKey(s))) {
         results.push({ session: s, snippet: s.snippet });
       }
     }
