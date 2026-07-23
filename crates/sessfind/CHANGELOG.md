@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.8.2...sessfind-v0.9.0) - 2026-07-23
+
+### Added
+
+- *(vscode)* complete session hub integration
+- LLM budget fix, hub actions for summaries/chat, stats page, git context
+- *(cli)* LLM project summaries and project chat commands
+- *(cli)* session rename and project-directory tags
+- *(cli)* add tools list with ready new-session commands
+- *(cli)* add tags and user-projects metadata layer
+- *(cli)* add JSON output and sessions/projects/capabilities commands
+- *(common)* add CommandSpec with resume/new-session builders
+
+### Fixed
+
+- align catalog and frontends with product spec
+
+### Other
+
+- *(cli)* [**breaking**] remove user-projects commands and metadata
+- document JSON API, tags/projects and the VS Code extension
+- *(search)* extract shared result post-processing and LLM expansion
+
 ## [0.8.2](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.8.1...sessfind-v0.8.2) - 2026-04-18
 
 ### Added
