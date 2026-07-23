@@ -1,0 +1,155 @@
+name: Release VS Code Marketplace
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.cargo/**'
+      - 'rust-toolchain*'
+      - 'editors/vscode/**'
+      # Lets this workflow publish a release that predates this automation.
+      - '.github/workflows/release-vscode-marketplace.yml'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: VS Code release tag to publish (for example vscode-v1.0.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-vscode-marketplace-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release PR and Marketplace publish
+    if: ${{ github.event_name == 'push' && !github.event.repository.fork }}
+    runs-on: ubuntu-24.04
+    outputs:
+      release_created: ${{ steps.release-please.outputs.release_created }}
+      tag_name: ${{ steps.release-please.outputs.tag_name }}
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Create or update release PR and GitHub release
+        id: release-please
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  pending-release:
+    name: Detect unpublished VS Code release
+    needs: release
+    if: needs.release.outputs.release_created != 'true'
+    runs-on: ubuntu-24.04
+    outputs:
+      publish: ${{ steps.pending.outputs.publish }}
+      tag_name: ${{ steps.pending.outputs.tag_name }}
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - run: npm ci
+      - name: Compare latest release with Marketplace
+        id: pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag_name="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq '[.[] | select(.tag_name | startswith("vscode-v"))][0].tag_name')"
+          marketplace_version="$(./node_modules/.bin/vsce show letsdev-it.sessfind --json 2>/dev/null \
+            | jq -r '.versions[0].version // empty' 2>/dev/null || true)"
+          release_version="${tag_name#vscode-v}"
+
+          if [ -n "${tag_name}" ] && [ "${tag_name}" != "null" ] && \
+             [ "${release_version}" != "${marketplace_version}" ]; then
+            echo "publish=true" >> "${GITHUB_OUTPUT}"
+            echo "tag_name=${tag_name}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "publish=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+  publish:
+    name: Publish to VS Code Marketplace
+    needs: [release, pending-release]
+    if: >-
+      always() && (
+      needs.release.outputs.release_created == 'true' ||
+      needs.pending-release.outputs.publish == 'true')
+    runs-on: ubuntu-24.04
+    environment: vscode-marketplace
+    concurrency:
+      group: vscode-marketplace
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.release_created == 'true' && needs.release.outputs.tag_name || needs.pending-release.outputs.tag_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run package
+      - name: Publish tested VSIX
+        run: npm run publish:marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+  publish-manual:
+    name: Publish existing VS Code release
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      startsWith(inputs.ref, 'vscode-v')
+    runs-on: ubuntu-24.04
+    environment: vscode-marketplace
+    concurrency:
+      group: vscode-marketplace
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run package
+      - name: Publish tested VSIX
+        run: npm run publish:marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}

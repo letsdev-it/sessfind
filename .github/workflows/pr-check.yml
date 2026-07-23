@@ -1,0 +1,87 @@
+name: Pull Request Checks
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-24.04
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      vscode: ${{ steps.filter.outputs.vscode }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.cargo/**'
+              - 'rust-toolchain*'
+            vscode:
+              - 'editors/vscode/**'
+
+  rust-check:
+    name: Rust check & test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --workspace
+      - name: Test
+        run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  rust-format:
+    name: Rust format
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  vscode-check:
+    name: VS Code check & package
+    needs: changes
+    if: needs.changes.outputs.vscode == 'true'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run package

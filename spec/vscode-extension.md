@@ -55,14 +55,18 @@ currently exposed by the VS Code extension.
 ## Packaging and checks
 
 VSIX packaging runs the extension build through `vscode:prepublish`, so a fresh
-checkout does not depend on an ignored local `dist/` directory. Pull requests
-that touch the extension, CLI JSON producer, or shared JSON types run
-typechecking, unit tests, build, and package creation.
+checkout does not depend on an ignored local `dist/` directory. The shared
+pull-request workflow always runs its change detector; pull requests that touch
+the extension run typechecking, unit tests, build, and package creation, while
+Rust checks run only for Rust/Cargo changes.
 
 Release automation mirrors the Cargo `release-plz` lifecycle. Conventional
 commits affecting the CLI or extension create or update a VS Code release PR;
 merging it updates the manifest, lockfile, version marker, and changelog, then
-creates a `vscode-v<version>` GitHub Release. That release publishes the
-already-tested VSIX to the Marketplace. Publishing is isolated in the
-`vscode-marketplace` GitHub environment and authenticates through the
+creates a `vscode-v<version>` GitHub Release and publishes a tested VSIX to the
+Marketplace. A separate release-assets workflow attaches the same versioned
+VSIX to the GitHub Release. When no new release is created, the Marketplace
+workflow reconciles the latest VS Code GitHub Release and publishes it only if
+the version is absent from Marketplace. Marketplace publishing is isolated in
+the `vscode-marketplace` GitHub environment and authenticates through the
 `VSCE_PAT` repository or environment secret.

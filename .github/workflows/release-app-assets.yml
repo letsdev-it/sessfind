@@ -1,4 +1,4 @@
-name: Release Binaries (github)
+name: Release app assets
 
 on:
   release:
@@ -19,6 +19,9 @@ defaults:
 jobs:
   upload-release-assets:
     name: Upload ${{ matrix.target }}
+    if: >-
+      startsWith(github.event.release.tag_name, 'sessfind-v') ||
+      startsWith(github.event.release.tag_name, 'sessfind-semantic-v')
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     permissions:
@@ -36,15 +39,13 @@ jobs:
           - target: x86_64-apple-darwin
             os: macos-26-intel
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Install cross-compilation tools
         uses: taiki-e/setup-cross-toolchain-action@v1

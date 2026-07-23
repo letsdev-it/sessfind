@@ -1,15 +1,15 @@
 # https://release-plz.dev/docs/github/quickstart
-name: Release Rust (cargo)
+name: Release app (cargo)
 
 on:
   push:
-    branches:
-      - main
-    paths-ignore:
-      - '.github/**'
-      - 'docs/**'
-      - 'mkdocs.yml'
-      - '*.md'
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.cargo/**'
+      - 'rust-toolchain*'
 
 env:
   CARGO_INCREMENTAL: 0
@@ -34,8 +34,8 @@ jobs:
       - run: cargo test --workspace
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
-  release-plz-release:
-    name: Release-plz release
+  release:
+    name: Release
     needs: test
     runs-on: ubuntu-latest
     if: ${{ !github.event.repository.fork }}
@@ -59,17 +59,14 @@ jobs:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Run release-plz release
-        id: release_plz
         uses: release-plz/action@v0.5.128
         with:
           command: release
@@ -77,25 +74,23 @@ jobs:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-  release-plz-pr:
-    name: Release-plz PR
+  release-pr:
+    name: Release PR
     runs-on: ubuntu-latest
     if: ${{ !github.event.repository.fork }}
     permissions:
       contents: write
       pull-requests: write
     concurrency:
-      group: release-plz-${{ github.ref }}
+      group: release-app-cargo-${{ github.ref }}
       cancel-in-progress: false
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Run release-plz release-pr
         uses: release-plz/action@v0.5.128
