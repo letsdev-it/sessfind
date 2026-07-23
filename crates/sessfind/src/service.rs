@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 const LABEL: &str = "dev.lets.sessfind.watch";
 
@@ -26,6 +26,56 @@ pub fn status() -> Result<()> {
         status_launchd()
     } else {
         status_systemd()
+    }
+}
+
+pub fn status_json() -> serde_json::Value {
+    if cfg!(target_os = "macos") {
+        let uid = unsafe { libc::getuid() };
+        let target = format!("gui/{uid}/{LABEL}");
+        match Command::new("launchctl").args(["print", &target]).output() {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let running = stdout.lines().any(|line| line.trim().starts_with("pid = "));
+                serde_json::json!({
+                    "installed": true,
+                    "state": if running { "running" } else { "stopped" },
+                })
+            }
+            Ok(_) => serde_json::json!({
+                "installed": plist_path().exists(),
+                "state": if plist_path().exists() { "stopped" } else { "not-installed" },
+            }),
+            Err(error) => serde_json::json!({
+                "installed": plist_path().exists(),
+                "state": "failed",
+                "error": error.to_string(),
+            }),
+        }
+    } else {
+        match Command::new("systemctl")
+            .args(["--user", "is-active", UNIT_NAME])
+            .output()
+        {
+            Ok(output) => {
+                let state = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let normalized = match state.as_str() {
+                    "active" => "running",
+                    "failed" => "failed",
+                    _ if unit_path().exists() => "stopped",
+                    _ => "not-installed",
+                };
+                serde_json::json!({
+                    "installed": unit_path().exists(),
+                    "state": normalized,
+                })
+            }
+            Err(error) => serde_json::json!({
+                "installed": unit_path().exists(),
+                "state": "failed",
+                "error": error.to_string(),
+            }),
+        }
     }
 }
 
@@ -99,13 +149,12 @@ fn install_launchd() -> Result<()> {
         .output()
         .context("failed to run launchctl bootstrap")?;
 
-    if out.status.success() {
-        eprintln!("Service installed and started.");
-        eprintln!("Logs: ~/Library/Logs/sessfind-watch.log");
-    } else {
+    if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        eprintln!("launchctl bootstrap failed: {stderr}");
+        bail!("launchctl bootstrap failed: {stderr}");
     }
+    eprintln!("Service installed and started.");
+    eprintln!("Logs: ~/Library/Logs/sessfind-watch.log");
     Ok(())
 }
 
@@ -205,20 +254,19 @@ fn install_systemd() -> Result<()> {
         .context("failed to run systemctl")?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        eprintln!("Warning: daemon-reload failed: {stderr}");
+        bail!("systemctl daemon-reload failed: {stderr}");
     }
 
     let out = Command::new("systemctl")
         .args(["--user", "enable", "--now", UNIT_NAME])
         .output()
         .context("failed to run systemctl enable")?;
-    if out.status.success() {
-        eprintln!("Service installed and started.");
-        eprintln!("View logs: journalctl --user -u {UNIT_NAME} -f");
-    } else {
+    if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        eprintln!("systemctl enable failed: {stderr}");
+        bail!("systemctl enable failed: {stderr}");
     }
+    eprintln!("Service installed and started.");
+    eprintln!("View logs: journalctl --user -u {UNIT_NAME} -f");
     Ok(())
 }
 

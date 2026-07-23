@@ -1,25 +1,21 @@
 use sessfind_common::Source;
+use tempfile::TempDir;
 
 // We need to test the engine through the binary since IndexEngine is not public.
 // Use dump-chunks + search CLI commands to verify indexing works end-to-end.
 
 #[test]
 fn index_and_search_roundtrip() {
-    use assert_cmd::Command;
+    let dir = TempDir::new().unwrap();
 
     // Index first
-    Command::cargo_bin("sessfind")
-        .unwrap()
+    command(&dir)
         .args(["index", "--source", "all"])
         .assert()
         .success();
 
     // Dump chunks should produce valid JSONL
-    let output = Command::cargo_bin("sessfind")
-        .unwrap()
-        .arg("dump-chunks")
-        .output()
-        .unwrap();
+    let output = command(&dir).arg("dump-chunks").output().unwrap();
     assert!(output.status.success());
 
     let stdout = String::from_utf8(output.stdout).unwrap();
@@ -37,8 +33,7 @@ fn index_and_search_roundtrip() {
             .split_whitespace()
             .find(|w| w.len() > 3 && w.chars().all(|c| c.is_alphanumeric()))
         {
-            let search_out = Command::cargo_bin("sessfind")
-                .unwrap()
+            let search_out = command(&dir)
                 .args(["search", word, "--limit", "1"])
                 .output()
                 .unwrap();
@@ -49,13 +44,13 @@ fn index_and_search_roundtrip() {
 
 #[test]
 fn dump_chunks_are_valid_dump_chunk_structs() {
-    use assert_cmd::Command;
+    let dir = TempDir::new().unwrap();
+    command(&dir)
+        .args(["index", "--source", "all"])
+        .assert()
+        .success();
 
-    let output = Command::cargo_bin("sessfind")
-        .unwrap()
-        .arg("dump-chunks")
-        .output()
-        .unwrap();
+    let output = command(&dir).arg("dump-chunks").output().unwrap();
     assert!(output.status.success());
 
     let stdout = String::from_utf8(output.stdout).unwrap();
@@ -80,4 +75,12 @@ fn dump_chunks_are_valid_dump_chunk_structs() {
                 | Source::Codex
         ));
     }
+}
+
+fn command(dir: &TempDir) -> assert_cmd::Command {
+    let mut command = assert_cmd::Command::cargo_bin("sessfind").unwrap();
+    command.env("SESSFIND_DATA_DIR", dir.path().join("data"));
+    command.env("XDG_CONFIG_HOME", dir.path().join("config"));
+    command.env("HOME", dir.path().join("home"));
+    command
 }

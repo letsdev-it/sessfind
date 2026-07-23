@@ -1,0 +1,121 @@
+{
+  "name": "sessfind",
+  "displayName": "Sessfind",
+  "description": "Search, browse and resume your AI coding-assistant sessions from VS Code.",
+  "version": "0.1.0",
+  "publisher": "letsdev-it",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letsdev-it/sessfind"
+  },
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sessfind",
+          "title": "Sessfind",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "sessfind": [
+        {
+          "id": "sessfind.hub",
+          "type": "webview",
+          "name": "Sessions"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "sessfind.refresh",
+        "title": "Refresh",
+        "category": "Sessfind",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "sessfind.indexNow",
+        "title": "Refresh Index",
+        "category": "Sessfind",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "sessfind.openSession",
+        "title": "Open Session",
+        "category": "Sessfind"
+      },
+      {
+        "command": "sessfind.setFilter",
+        "title": "Focus Search",
+        "category": "Sessfind",
+        "icon": "$(search)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "sessfind.indexNow",
+          "when": "view == sessfind.hub",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sessfind.refresh",
+          "when": "view == sessfind.hub",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Sessfind",
+      "properties": {
+        "sessfind.binaryPath": {
+          "type": "string",
+          "default": "sessfind",
+          "description": "Path to the sessfind binary. Use an absolute path if it is not on your PATH."
+        },
+        "sessfind.searchLimit": {
+          "type": "number",
+          "default": 50,
+          "description": "Maximum number of search results to fetch."
+        },
+        "sessfind.defaultSearchMethod": {
+          "type": "string",
+          "enum": [
+            "fts",
+            "fuzzy",
+            "semantic",
+            "llm"
+          ],
+          "default": "fts",
+          "description": "Default search method used by the search command."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "package": "vsce package --no-dependencies",
+    "publish:marketplace": "vsce publish --packagePath sessfind-*.vsix --skip-duplicate"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.93.0",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.1.0"
+  }
+}

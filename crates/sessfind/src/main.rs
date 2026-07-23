@@ -1,6 +1,8 @@
+mod commands;
 mod config;
 mod indexer;
 mod llm;
+mod metadata;
 mod models;
 mod search;
 pub mod semantic;
@@ -11,16 +13,13 @@ mod version_check;
 mod watcher;
 
 use anyhow::Result;
-use chrono::{NaiveDate, TimeZone, Utc};
+use chrono::{Local, NaiveDate, TimeZone, Utc};
 use clap::{Parser, Subcommand};
 
 use crate::indexer::engine::{IndexEngine, SearchParams};
+use crate::models::Source;
+use crate::search::results::{SortOrder, dedup_by_session};
 use crate::sources::SessionSource;
-use crate::sources::claude_code::ClaudeCodeSource;
-use crate::sources::codex::CodexSource;
-use crate::sources::copilot::CopilotSource;
-use crate::sources::cursor::CursorSource;
-use crate::sources::opencode::OpenCodeSource;
 
 #[derive(Parser)]
 #[command(
@@ -72,14 +71,49 @@ enum Commands {
         /// Search method (fts, fuzzy, semantic, llm)
         #[arg(long, short = 'm', default_value = "fts")]
         method: String,
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Show full session content
     Show {
         /// Session ID (from search results)
         session_id: String,
+        /// Source owning the session (required only if native ids collide)
+        #[arg(long, short = 's')]
+        source: Option<String>,
+        /// Output session as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Show index statistics
-    Stats,
+    Stats {
+        /// Output statistics as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print machine-readable capabilities of this binary (always JSON)
+    Capabilities,
+    /// List indexed sessions
+    Sessions {
+        #[command(subcommand)]
+        action: SessionsAction,
+    },
+    /// List projects derived from indexed sessions
+    Projects {
+        #[command(subcommand)]
+        action: ProjectsAction,
+    },
+    /// List installed AI CLI tools
+    Tools {
+        #[command(subcommand)]
+        action: ToolsAction,
+    },
+    /// Manage tags on sessions
+    Tag {
+        #[command(subcommand)]
+        action: TagAction,
+    },
     /// Dump all indexed chunks as JSONL (for plugins)
     DumpChunks,
     /// Set LLM model override for a provider
@@ -104,6 +138,126 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
+enum SessionsAction {
+    /// List all indexed sessions (newest first)
+    List {
+        /// Filter by source (claude, opencode, copilot, cursor, codex)
+        #[arg(long, short = 's')]
+        source: Option<String>,
+        /// Filter by project name (substring match)
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+        /// Filter by tag
+        #[arg(long, short = 't')]
+        tag: Option<String>,
+        /// Max sessions (default: all)
+        #[arg(long, short = 'n')]
+        limit: Option<usize>,
+        /// Sort order (time, score)
+        #[arg(long, default_value = "time")]
+        sort: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Set or clear a custom display name for a session
+    Rename {
+        session_id: String,
+        /// Source owning the session (required only if native ids collide)
+        #[arg(long, short = 's')]
+        source: Option<String>,
+        /// The new name (omit together with --clear to remove the override)
+        name: Option<String>,
+        /// Remove the custom name
+        #[arg(long)]
+        clear: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProjectsAction {
+    /// List auto-grouped projects (grouped by session directory)
+    List {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Generate an LLM summary of a project directory
+    Summarize {
+        dir: String,
+        /// LLM backend to use (claude, opencode, copilot); default: first detected
+        #[arg(long)]
+        tool: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Build the command that opens a chat about a project (context pre-loaded)
+    Chat {
+        dir: String,
+        /// Tool to chat with (claude, opencode, codex); default: first capable
+        #[arg(long)]
+        tool: Option<String>,
+        /// Output the command as JSON (CommandSpec)
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ToolsAction {
+    /// List installed AI CLI tools with new-session commands
+    List {
+        /// Directory the new-session commands should run in (default: cwd)
+        #[arg(long)]
+        dir: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum TagAction {
+    /// Add one or more tags to a session
+    Add {
+        session_id: String,
+        /// Source owning the session (required only if native ids collide)
+        #[arg(long, short = 's')]
+        source: Option<String>,
+        #[arg(required = true)]
+        tags: Vec<String>,
+    },
+    /// Remove one or more tags from a session
+    Rm {
+        session_id: String,
+        /// Source owning the session (required only if native ids collide)
+        #[arg(long, short = 's')]
+        source: Option<String>,
+        #[arg(required = true)]
+        tags: Vec<String>,
+    },
+    /// List all tags with session counts
+    List {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Tag a whole project directory (sessions in it inherit the tag)
+    AddProject {
+        dir: String,
+        #[arg(required = true)]
+        tags: Vec<String>,
+    },
+    /// Remove tags from a project directory
+    RmProject {
+        dir: String,
+        #[arg(required = true)]
+        tags: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum WatchAction {
     /// Install watcher as a system service (launchd on macOS, systemd on Linux)
     Install,
@@ -113,52 +267,66 @@ enum WatchAction {
     Status,
 }
 
-fn get_sources(filter: &str) -> Vec<Box<dyn SessionSource>> {
+fn get_sources(filter: &str) -> Result<Vec<Box<dyn SessionSource>>> {
     let mut sources: Vec<Box<dyn SessionSource>> = Vec::new();
     match filter {
         "all" => {
-            sources.push(Box::new(ClaudeCodeSource::new()));
-            sources.push(Box::new(OpenCodeSource::new()));
-            sources.push(Box::new(CopilotSource::new()));
-            sources.push(Box::new(CursorSource::new()));
-            sources.push(Box::new(CodexSource::new()));
+            sources = crate::sources::all_sources();
         }
-        "claude" => sources.push(Box::new(ClaudeCodeSource::new())),
-        "opencode" => sources.push(Box::new(OpenCodeSource::new())),
-        "copilot" => sources.push(Box::new(CopilotSource::new())),
-        "cursor" => sources.push(Box::new(CursorSource::new())),
-        "codex" => sources.push(Box::new(CodexSource::new())),
+        "claude" | "opencode" | "copilot" | "cursor" | "codex" => {
+            sources.push(crate::sources::source_for(
+                Source::parse_source(filter).expect("validated source"),
+            ));
+        }
         other => {
-            eprintln!(
+            anyhow::bail!(
                 "Unknown source: {other}. Available: claude, opencode, copilot, cursor, codex, all"
-            );
+            )
         }
     }
-    sources
+    Ok(sources)
 }
 
-fn parse_date(s: &str) -> Result<chrono::DateTime<Utc>> {
+fn parse_date(s: &str, end_of_day: bool) -> Result<chrono::DateTime<Utc>> {
     let date = NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .map_err(|_| anyhow::anyhow!("Invalid date format: {s}. Expected YYYY-MM-DD"))?;
-    Ok(Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0).unwrap()))
+    let time = if end_of_day {
+        date.and_hms_nano_opt(23, 59, 59, 999_999_999).unwrap()
+    } else {
+        date.and_hms_opt(0, 0, 0).unwrap()
+    };
+    let local = Local
+        .from_local_datetime(&time)
+        .single()
+        .ok_or_else(|| anyhow::anyhow!("Date is not unique in the local timezone: {s}"))?;
+    Ok(local.with_timezone(&Utc))
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let data_dir = config::data_dir();
-    let engine = IndexEngine::open(&data_dir)?;
+
+    // The tantivy index is opened lazily: metadata-only commands (tag, project,
+    // capabilities, llm-model-*) never touch it, avoiding its lock and load cost.
+    let open_engine = || IndexEngine::open(&data_dir);
+    let open_metadata = || metadata::MetadataStore::open(&config::metadata_db_path());
 
     let command = match cli.command {
         Some(cmd) => cmd,
         None => {
+            let engine = open_engine()?;
             // Index before launching TUI if requested
             if cli.index {
-                let sources = get_sources("all");
+                let sources = get_sources("all")?;
                 for src in &sources {
-                    let _ = engine.index_source(src.as_ref(), false);
+                    if let Err(error) = engine.index_source(src.as_ref(), false) {
+                        eprintln!("Warning: failed to index {}: {error}", src.name());
+                    }
                 }
-                if semantic::is_available() {
-                    let _ = semantic::trigger_index();
+                if semantic::is_available()
+                    && let Err(error) = semantic::trigger_index()
+                {
+                    eprintln!("Warning: semantic indexing failed: {error}");
                 }
             }
             // Launch TUI
@@ -171,17 +339,25 @@ fn main() -> Result<()> {
 
     match command {
         Commands::Index { source, force } => {
-            let sources = get_sources(&source);
+            let engine = open_engine()?;
+            let sources = get_sources(&source)?;
+            let mut failures = Vec::new();
             for src in &sources {
                 eprint!("Indexing {}... ", src.name());
-                let stats = engine.index_source(src.as_ref(), force)?;
-                if stats.new_sessions == 0 {
-                    eprintln!("up to date ({} sessions)", stats.total_sessions);
-                } else {
-                    eprintln!(
-                        "done ({} new sessions, {} chunks)",
-                        stats.new_sessions, stats.total_chunks
-                    );
+                match engine.index_source(src.as_ref(), force) {
+                    Ok(stats) => eprintln!(
+                        "done ({} added, {} updated, {} removed, {} unchanged, {} skipped, {} chunks)",
+                        stats.new_sessions,
+                        stats.updated_sessions,
+                        stats.removed_sessions,
+                        stats.unchanged_sessions,
+                        stats.skipped_sessions,
+                        stats.total_chunks
+                    ),
+                    Err(error) => {
+                        eprintln!("failed: {error}");
+                        failures.push(format!("{}: {error}", src.name()));
+                    }
                 }
             }
 
@@ -189,10 +365,16 @@ fn main() -> Result<()> {
             if semantic::is_available() {
                 eprintln!();
                 eprint!("Updating semantic index... ");
-                match semantic::trigger_index() {
-                    Ok(()) => {}
-                    Err(e) => eprintln!("warning: semantic indexing failed: {e}"),
+                if let Err(error) = semantic::trigger_index() {
+                    eprintln!("warning: semantic indexing failed: {error}");
                 }
+            }
+            if !failures.is_empty() {
+                anyhow::bail!(
+                    "Indexing failed for {} source(s): {}",
+                    failures.len(),
+                    failures.join("; ")
+                );
             }
         }
         Commands::Search {
@@ -203,9 +385,25 @@ fn main() -> Result<()> {
             before,
             limit,
             method,
+            json,
         } => {
-            let after_dt = after.as_deref().map(parse_date).transpose()?;
-            let before_dt = before.as_deref().map(parse_date).transpose()?;
+            let engine = open_engine()?;
+            if let Some(source) = source.as_deref()
+                && Source::parse_source(source).is_none()
+            {
+                anyhow::bail!("Unknown source: {source}");
+            }
+            if !["fts", "fuzzy", "semantic", "llm"].contains(&method.as_str()) {
+                anyhow::bail!("Unknown search method: {method}");
+            }
+            let after_dt = after
+                .as_deref()
+                .map(|value| parse_date(value, false))
+                .transpose()?;
+            let before_dt = before
+                .as_deref()
+                .map(|value| parse_date(value, true))
+                .transpose()?;
 
             let params = SearchParams {
                 query: query.clone(),
@@ -216,250 +414,206 @@ fn main() -> Result<()> {
                 before: before_dt,
             };
 
-            let results = if method == "semantic" {
+            let mut results = if method == "semantic" {
                 if !semantic::is_available() {
-                    eprintln!("Semantic search plugin not installed.");
-                    eprintln!("Install with: cargo install sessfind-semantic");
-                    return Ok(());
+                    anyhow::bail!(
+                        "Semantic search unavailable. Install with: cargo install sessfind-semantic"
+                    );
                 }
                 semantic::search(&params)?
             } else if method == "llm" {
-                let backends = llm::detect_backends();
+                let backends = llm::detect_backends()?;
                 if backends.is_empty() {
-                    eprintln!("No LLM CLI tools detected (claude, opencode, copilot).");
-                    return Ok(());
+                    anyhow::bail!(
+                        "LLM search unavailable: no supported CLI detected (claude, opencode, copilot)"
+                    );
                 }
                 let backend = &backends[0];
                 eprintln!("Searching with LLM ({})...", backend.display());
 
-                // Ask LLM to generate FTS queries from user intent
-                let prompt = llm::build_query_gen_prompt(&query);
-                let response = llm::invoke(backend, &prompt)?;
-                let queries = llm::parse_query_gen_response(&response);
-
-                let queries = if queries.is_empty() {
-                    eprintln!("LLM returned no queries, falling back to original query.");
-                    vec![query.clone()]
-                } else {
-                    eprintln!("LLM generated {} queries", queries.len());
-                    queries
+                let base = SearchParams {
+                    query: String::new(),
+                    limit: 30,
+                    source: source.clone(),
+                    project: project.clone(),
+                    after: after_dt,
+                    before: before_dt,
                 };
+                let expanded = llm::expanded_search(&engine, backend, &query, &base)?;
+                eprintln!("LLM generated {} queries", expanded.queries.len());
 
-                // Run each generated query and merge results
-                let mut all_results = Vec::new();
-                for q in &queries {
-                    let qparams = SearchParams {
-                        query: q.clone(),
-                        limit: 30,
-                        source: source.clone(),
-                        project: project.clone(),
-                        after: after_dt,
-                        before: before_dt,
-                    };
-                    if let Ok(results) = engine.search(&qparams) {
-                        all_results.extend(results);
-                    }
-                }
-
-                // Dedup by session, keep highest score, sort descending
-                let mut best: std::collections::HashMap<String, models::SearchResult> =
-                    std::collections::HashMap::new();
-                for r in all_results {
-                    best.entry(r.session_id.clone())
-                        .and_modify(|existing| {
-                            if r.score > existing.score {
-                                *existing = r.clone();
-                            }
-                        })
-                        .or_insert(r);
-                }
-                let mut merged: Vec<_> = best.into_values().collect();
-                merged.sort_by(|a, b| {
-                    b.score
-                        .partial_cmp(&a.score)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                        .then_with(|| b.timestamp.cmp(&a.timestamp))
-                });
-                merged
+                expanded.results
             } else if method == "fuzzy" {
                 engine.search_fuzzy(&params)?
             } else {
                 engine.search(&params)?
             };
 
-            if results.is_empty() {
-                println!("No results found.");
-                return Ok(());
-            }
-
-            println!(
-                "\x1b[1m{:<6} {:<10} {:<30} {:<12} Preview\x1b[0m",
-                "Score", "Source", "Project", "Date"
-            );
-            println!("\x1b[90m{}\x1b[0m", "-".repeat(100));
-
-            for r in results.iter().take(limit) {
-                let date = r.timestamp.format("%Y-%m-%d");
-                let project = truncate_project(&r.project, 28);
-                let snippet = r.snippet.replace('\n', " ");
-                let snippet = truncate_str(&snippet, 60);
-
-                let source_colored = match r.source {
-                    models::Source::ClaudeCode => format!("\x1b[35m{:<10}\x1b[0m", "claude"),
-                    models::Source::OpenCode => format!("\x1b[36m{:<10}\x1b[0m", "opencode"),
-                    models::Source::Copilot => format!("\x1b[33m{:<10}\x1b[0m", "copilot"),
-                    models::Source::Cursor => format!("\x1b[32m{:<10}\x1b[0m", "cursor"),
-                    models::Source::Codex => format!("\x1b[91m{:<10}\x1b[0m", "codex"),
-                };
-
-                println!(
-                    "\x1b[32m{:<6.2}\x1b[0m {} {:<30} \x1b[90m{:<12}\x1b[0m {}",
-                    r.score, source_colored, project, date, snippet
-                );
-            }
-
-            println!();
-            println!("\x1b[90mUse `sessfind show <SESSION_ID>` to view full session.\x1b[0m");
-            let unique_sessions: Vec<_> = {
-                let mut seen = std::collections::HashSet::new();
-                results
-                    .iter()
-                    .filter(|r| seen.insert(&r.session_id))
-                    .take(3)
-                    .collect()
-            };
-            for r in &unique_sessions {
-                println!("\x1b[90m  {} ({})\x1b[0m", r.session_id, r.source.as_str());
-            }
+            let store = open_metadata()?;
+            results.extend(commands::metadata_search_matches(&engine, &store, &params)?);
+            commands::apply_custom_names(&store, &mut results)?;
+            let results = dedup_by_session(&results, SortOrder::ScoreDesc);
+            commands::print_search_results(&results, limit, json)?;
         }
-        Commands::Show { session_id } => {
-            let chunks = engine.get_session_chunks(&session_id)?;
-            if chunks.is_empty() {
-                eprintln!("No session found with ID: {session_id}");
-                eprintln!("Tip: Use the full session ID from search results.");
-                return Ok(());
-            }
-
-            let first = &chunks[0];
-            println!(
-                "\x1b[1mSession:\x1b[0m {} \x1b[90m({})\x1b[0m",
-                first.session_id,
-                first.source.as_str()
-            );
-            println!("\x1b[1mProject:\x1b[0m {}", first.project);
-            println!(
-                "\x1b[1mDate:\x1b[0m    {}",
-                first.timestamp.format("%Y-%m-%d %H:%M")
-            );
-            if let Some(title) = &first.title {
-                println!("\x1b[1mTitle:\x1b[0m   {title}");
-            }
-            println!("{}", "-".repeat(80));
-            println!();
-
-            for chunk in &chunks {
-                for line in chunk.snippet.lines() {
-                    if line.starts_with("USER:") {
-                        println!("\x1b[32m{}\x1b[0m", line);
-                    } else if line.starts_with("ASSISTANT:") {
-                        println!("\x1b[34m{}\x1b[0m", line);
-                    } else if line.starts_with("[tools:") {
-                        println!("\x1b[90m{}\x1b[0m", line);
-                    } else {
-                        println!("{}", line);
-                    }
-                }
-                println!();
-            }
+        Commands::Show {
+            session_id,
+            source,
+            json,
+        } => {
+            let engine = open_engine()?;
+            let store = open_metadata()?;
+            commands::show(&engine, &store, &session_id, source.as_deref(), json)?;
         }
         Commands::DumpChunks => {
+            let engine = open_engine()?;
             let chunks = engine.dump_all_chunks()?;
             for chunk in &chunks {
                 let json = serde_json::to_string(chunk)?;
                 println!("{json}");
             }
         }
-        Commands::Stats => {
-            let claude = engine.session_count(Some("claude"))?;
-            let opencode = engine.session_count(Some("opencode"))?;
-            let copilot = engine.session_count(Some("copilot"))?;
-            let cursor = engine.session_count(Some("cursor"))?;
-            let codex = engine.session_count(Some("codex"))?;
-            let total = engine.session_count(None)?;
-
-            println!("\x1b[1mIndexed sessions:\x1b[0m");
-            println!("  \x1b[35mClaude Code:\x1b[0m {claude}");
-            println!("  \x1b[36mOpenCode:\x1b[0m    {opencode}");
-            println!("  \x1b[33mCopilot:\x1b[0m     {copilot}");
-            println!("  \x1b[32mCursor:\x1b[0m      {cursor}");
-            println!("  \x1b[91mCodex:\x1b[0m       {codex}");
-            println!("  Total:       {total}");
-            println!();
-
-            // Semantic plugin status
-            if semantic::is_available() {
-                match semantic::status() {
-                    Ok(st) => {
-                        println!("\x1b[1mSemantic search:\x1b[0m");
-                        println!("  Model:       {}", st.model);
-                        println!("  Chunks:      {}", st.indexed_chunks);
-                        println!();
-                    }
-                    Err(e) => {
-                        println!("\x1b[1mSemantic search:\x1b[0m \x1b[33merror: {e}\x1b[0m");
-                        println!();
-                    }
+        Commands::Stats { json } => {
+            let engine = open_engine()?;
+            commands::stats(&engine, json)?;
+        }
+        Commands::Capabilities => {
+            commands::capabilities()?;
+        }
+        Commands::Sessions { action } => match action {
+            SessionsAction::List {
+                source,
+                project,
+                tag,
+                limit,
+                sort,
+                json,
+            } => {
+                if let Some(source) = source.as_deref()
+                    && Source::parse_source(source).is_none()
+                {
+                    anyhow::bail!("Unknown source: {source}");
                 }
-            } else {
-                println!(
-                    "\x1b[90mSemantic search: not installed (cargo install sessfind-semantic)\x1b[0m"
-                );
-                println!();
+                let sort = match sort.as_str() {
+                    "time" => SortOrder::TimeDesc,
+                    "score" => SortOrder::ScoreDesc,
+                    other => anyhow::bail!("Invalid sort order: {other}. Expected time or score"),
+                };
+                let engine = open_engine()?;
+                let store = open_metadata()?;
+                commands::sessions_list(
+                    &engine,
+                    &store,
+                    &commands::SessionListOpts {
+                        source,
+                        project,
+                        tag,
+                        limit,
+                        sort,
+                        json,
+                    },
+                )?;
             }
-
-            // LLM backends
-            let backends = llm::detect_backends();
-            if backends.is_empty() {
-                println!(
-                    "\x1b[90mLLM search: no CLI tools detected (install claude, opencode, or copilot)\x1b[0m"
-                );
-            } else {
-                println!("\x1b[1mLLM search backends:\x1b[0m");
-                for b in &backends {
-                    let model_info = match &b.model {
-                        Some(m) => format!("model: {m}"),
-                        None => "model: (tool default)".into(),
-                    };
-                    println!("  \x1b[33m{:<10}\x1b[0m {model_info}", b.name);
+            SessionsAction::Rename {
+                session_id,
+                source,
+                name,
+                clear,
+            } => {
+                if clear == name.is_some() {
+                    anyhow::bail!("sessions rename requires exactly one of NAME or --clear");
                 }
-                println!(
-                    "\x1b[90m  Config: {}\x1b[0m",
-                    crate::config::config_path().display()
-                );
+                let engine = open_engine()?;
+                let store = open_metadata()?;
+                let name = if clear { None } else { name };
+                commands::session_rename(
+                    &engine,
+                    &store,
+                    &session_id,
+                    source.as_deref(),
+                    name.as_deref(),
+                )?;
             }
-            println!();
-
-            println!(
-                "\x1b[90mIndex location: {}\x1b[0m",
-                config::data_dir().display()
-            );
+        },
+        Commands::Projects { action } => match action {
+            ProjectsAction::List { json } => {
+                let engine = open_engine()?;
+                let store = open_metadata()?;
+                commands::projects_list(&engine, &store, json)?;
+            }
+            ProjectsAction::Summarize { dir, tool, json } => {
+                let engine = open_engine()?;
+                let store = open_metadata()?;
+                commands::projects_summarize(&engine, &store, &dir, tool.as_deref(), json)?;
+            }
+            ProjectsAction::Chat { dir, tool, json } => {
+                let engine = open_engine()?;
+                let store = open_metadata()?;
+                commands::projects_chat(&engine, &store, &dir, tool.as_deref(), json)?;
+            }
+        },
+        Commands::Tools {
+            action: ToolsAction::List { dir, json },
+        } => {
+            commands::tools_list(dir.as_deref(), json)?;
+        }
+        Commands::Tag { action } => {
+            let store = open_metadata()?;
+            match action {
+                TagAction::Add {
+                    session_id,
+                    source,
+                    tags,
+                } => {
+                    let engine = open_engine()?;
+                    commands::tag_add(&engine, &store, &session_id, source.as_deref(), &tags)?;
+                }
+                TagAction::Rm {
+                    session_id,
+                    source,
+                    tags,
+                } => {
+                    let engine = open_engine()?;
+                    commands::tag_rm(&engine, &store, &session_id, source.as_deref(), &tags)?;
+                }
+                TagAction::List { json } => {
+                    let engine = open_engine()?;
+                    commands::tag_list(&engine, &store, json)?;
+                }
+                TagAction::AddProject { dir, tags } => {
+                    let engine = open_engine()?;
+                    commands::tag_add_project(&engine, &store, &dir, &tags)?;
+                }
+                TagAction::RmProject { dir, tags } => {
+                    let engine = open_engine()?;
+                    commands::tag_rm_project(&engine, &store, &dir, &tags)?;
+                }
+            }
         }
         Commands::LlmModelSet { provider, model } => {
-            let valid = ["claude", "opencode", "copilot", "cursor", "codex"];
+            let valid = ["claude", "opencode", "copilot"];
             if !valid.contains(&provider.as_str()) {
-                eprintln!(
+                anyhow::bail!(
                     "Unknown provider: {provider}. Available: {}",
                     valid.join(", ")
                 );
-                return Ok(());
             }
-            let mut cfg = config::Config::load();
+            if model.trim().is_empty() {
+                anyhow::bail!("Model identifier cannot be empty");
+            }
+            let mut cfg = config::Config::load()?;
             cfg.llm_models.insert(provider.clone(), model.clone());
             cfg.save()?;
             println!("Set {provider} model to: {model}");
         }
         Commands::LlmModelUnset { provider } => {
-            let mut cfg = config::Config::load();
+            let valid = ["claude", "opencode", "copilot"];
+            if !valid.contains(&provider.as_str()) {
+                anyhow::bail!(
+                    "Unknown provider: {provider}. Available: {}",
+                    valid.join(", ")
+                );
+            }
+            let mut cfg = config::Config::load()?;
             if cfg.llm_models.remove(&provider).is_some() {
                 cfg.save()?;
                 println!("Removed model override for {provider} (will use tool default)");
@@ -485,32 +639,17 @@ fn exec_resume(resume: &tui::ResumeCommand) -> Result<()> {
     // Claude Code requires being in the project directory to find the session
     if let Some(ref cwd) = resume.cwd {
         let path = std::path::Path::new(cwd);
-        if path.is_dir() {
-            command.current_dir(path);
+        if !path.exists() {
+            std::fs::create_dir_all(path).map_err(|error| {
+                anyhow::anyhow!("Cannot create resume directory {cwd}: {error}")
+            })?;
         }
+        if !path.is_dir() {
+            anyhow::bail!("Resume working directory is not a directory: {cwd}");
+        }
+        command.current_dir(path);
     }
     // Replace current process with the resume command
     let err = command.exec();
     Err(anyhow::anyhow!("Failed to exec {}: {err}", resume.args[0]))
-}
-
-fn truncate_project(project: &str, max: usize) -> String {
-    let chars: Vec<char> = project.chars().collect();
-    if chars.len() <= max {
-        project.to_string()
-    } else {
-        let skip = chars.len() - (max - 3);
-        let truncated: String = chars[skip..].iter().collect();
-        format!("...{truncated}")
-    }
-}
-
-fn truncate_str(s: &str, max: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max {
-        s.to_string()
-    } else {
-        let truncated: String = chars[..max - 3].iter().collect();
-        format!("{truncated}...")
-    }
 }

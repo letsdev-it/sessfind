@@ -19,6 +19,7 @@ crates/
 ~/.local/share/sessfind/
 ├── index/          # tantivy search index
 ├── state.db        # SQLite tracking indexed sessions
+├── metadata.db     # custom names, tags, and project summaries
 └── semantic.db     # sqlite-vec embeddings (if plugin installed)
 
 ~/.config/sessfind/
@@ -26,4 +27,7 @@ crates/
 ```
 
 !!! info
-    All data is stored locally. sessfind does not send any session content to remote servers (except when you explicitly trigger an LLM search, which invokes the AI CLI tool you have installed).
+    Indexes and metadata stay local. When you explicitly trigger LLM search,
+    sessfind sends the search intent to the selected installed AI CLI. When you
+    explicitly generate a project summary, it sends project/session titles and
+    excerpts from up to five recent conversations to that provider.

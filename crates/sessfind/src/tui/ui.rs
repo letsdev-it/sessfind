@@ -216,11 +216,15 @@ fn draw_results_list(f: &mut Frame, app: &App, area: Rect) {
             .block(block);
         f.render_widget(p, list_area);
 
-        // Empty info line with bottom border
         let info_block = Block::default()
             .borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT)
             .border_style(border_style);
-        f.render_widget(info_block, info_area);
+        let info = app
+            .search_error
+            .as_deref()
+            .map(|error| Line::from(Span::styled(error, Style::default().fg(Color::Red))))
+            .unwrap_or_default();
+        f.render_widget(Paragraph::new(info).block(info_block), info_area);
         return;
     }
 
@@ -290,9 +294,14 @@ fn draw_results_list(f: &mut Frame, app: &App, area: Rect) {
         format!(" {} results (max 50) | ⇅ {}", count, sort_label)
     };
 
+    let (info_text, info_color) = if let Some(error) = &app.search_error {
+        (format!(" Search failed: {error}"), Color::Red)
+    } else {
+        (limit_info, Color::DarkGray)
+    };
     let info_line = Paragraph::new(Line::from(vec![Span::styled(
-        limit_info,
-        Style::default().fg(Color::DarkGray),
+        info_text,
+        Style::default().fg(info_color),
     )]))
     .block(
         Block::default()
@@ -382,6 +391,20 @@ fn draw_detail_pane(f: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(title, Style::default().fg(Color::Reset)),
         ]));
     }
+    if let Some(warning) = app
+        .freshness_warnings
+        .iter()
+        .find(|warning| warning.starts_with(&format!("{} ", selected.source.as_str())))
+    {
+        lines.push(Line::from(Span::styled(
+            format!(" Warning: {warning}"),
+            Style::default().fg(Color::Yellow),
+        )));
+        lines.push(Line::from(Span::styled(
+            " Press r in the preview pane to synchronize this source.",
+            Style::default().fg(Color::Yellow),
+        )));
+    }
 
     lines.push(Line::from(vec![
         Span::styled(" Method:  ", Style::default().fg(Color::DarkGray)),
@@ -439,7 +462,7 @@ fn draw_detail_pane(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Fixed resume hint at bottom with bottom border
     let hint = Paragraph::new(Line::from(Span::styled(
-        " Enter → resume this session",
+        " Enter → resume this session  |  r → sync source",
         Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::ITALIC),
@@ -559,10 +582,15 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     ));
                     spans.push(Span::styled("scroll", Style::default().fg(Color::White)));
                     spans.push(Span::styled(
-                        "  PgUp ",
+                        "  PgUp/PgDn ",
                         Style::default().fg(Color::DarkGray),
                     ));
-                    spans.push(Span::styled("top", Style::default().fg(Color::White)));
+                    spans.push(Span::styled("page", Style::default().fg(Color::White)));
+                    spans.push(Span::styled("  r ", Style::default().fg(Color::DarkGray)));
+                    spans.push(Span::styled(
+                        "sync source",
+                        Style::default().fg(Color::White),
+                    ));
                 }
             }
 
@@ -587,6 +615,12 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         format!("  {count} sessions"),
         Style::default().fg(Color::DarkGray),
     ));
+    if !app.freshness_warnings.is_empty() {
+        spans.push(Span::styled(
+            format!("  ⚠ {} stale source(s)", app.freshness_warnings.len()),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
 
     let status = Line::from(spans);
     let bar = Paragraph::new(status).style(Style::default().bg(Color::Black));
@@ -737,7 +771,11 @@ fn draw_help_popup(f: &mut Frame, area: Rect, scroll: usize) {
             Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
-            "   PgUp          jump to top of preview",
+            "   PgUp/PgDn     scroll preview by one page",
+            Style::default().fg(Color::Reset),
+        )),
+        Line::from(Span::styled(
+            "   r             re-index the selected session source",
             Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
@@ -757,7 +795,7 @@ fn draw_help_popup(f: &mut Frame, area: Rect, scroll: usize) {
             Style::default().fg(Color::Reset),
         )),
         Line::from(Span::styled(
-            "   Esc           quit (or close this help)",
+            "   Esc           cancel a pending search, quit, or close this help",
             Style::default().fg(Color::Reset),
         )),
         Line::from(""),

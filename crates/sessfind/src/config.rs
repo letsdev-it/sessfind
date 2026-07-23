@@ -5,7 +5,22 @@ use serde::{Deserialize, Serialize};
 
 pub use sessfind_common::CHUNK_MAX_CHARS;
 pub use sessfind_common::CHUNK_MIN_CHARS;
-pub use sessfind_common::data_dir;
+
+/// Root for the index and sessfind-owned metadata.
+///
+/// `SESSFIND_DATA_DIR` is intentionally supported for hermetic tests and
+/// isolated frontend environments; normal users get the platform data dir.
+pub fn data_dir() -> PathBuf {
+    std::env::var_os("SESSFIND_DATA_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(sessfind_common::data_dir)
+}
+
+/// Path to the user-metadata DB (names and tags): <data_dir>/metadata.db
+pub fn metadata_db_path() -> PathBuf {
+    data_dir().join("metadata.db")
+}
 
 /// Path to config file: ~/.config/sessfind/config.json
 pub fn config_path() -> PathBuf {
@@ -27,12 +42,18 @@ pub struct Config {
 }
 
 impl Config {
-    /// Load config from disk. Returns default if file doesn't exist.
-    pub fn load() -> Self {
+    /// Load config from disk. A missing file is the default configuration;
+    /// malformed or unreadable existing configuration is reported.
+    pub fn load() -> anyhow::Result<Self> {
         let path = config_path();
         match std::fs::read_to_string(&path) {
-            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-            Err(_) => Self::default(),
+            Ok(contents) => serde_json::from_str(&contents)
+                .map_err(|error| anyhow::anyhow!("Invalid config {}: {error}", path.display())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(error) => Err(anyhow::anyhow!(
+                "Cannot read config {}: {error}",
+                path.display()
+            )),
         }
     }
 

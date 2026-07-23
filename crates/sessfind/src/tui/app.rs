@@ -1,12 +1,22 @@
-use std::collections::HashMap;
 use std::sync::mpsc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use chrono::{DateTime, Utc};
 
 use crate::indexer::engine::{IndexEngine, SearchParams};
 use crate::llm::{self, LlmBackend};
 use crate::models::{SearchResult, Source};
+use crate::search::results::{SortOrder, apply_sort, dedup_by_session};
 use crate::semantic;
+use sessfind_common::CommandSpec;
+
+type PendingSearch = (
+    mpsc::Receiver<anyhow::Result<Vec<SearchResult>>>,
+    Arc<AtomicBool>,
+);
 
 #[derive(Debug, Clone)]
 pub enum SearchMode {
@@ -34,30 +44,6 @@ impl SearchMode {
 
     pub fn is_deferred(&self) -> bool {
         matches!(self, SearchMode::Semantic | SearchMode::Llm(_))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SortOrder {
-    /// Time descending (newest first), then score descending as tiebreaker.
-    TimeDesc,
-    /// Score descending (best match first), then time descending as tiebreaker.
-    ScoreDesc,
-}
-
-impl SortOrder {
-    pub fn label(&self) -> &'static str {
-        match self {
-            SortOrder::TimeDesc => "Newest first",
-            SortOrder::ScoreDesc => "Best match",
-        }
-    }
-
-    pub fn next(self) -> Self {
-        match self {
-            SortOrder::TimeDesc => SortOrder::ScoreDesc,
-            SortOrder::ScoreDesc => SortOrder::TimeDesc,
-        }
     }
 }
 
@@ -110,6 +96,8 @@ pub struct App<'a> {
     pub mode_index: usize,
     pub semantic_searching: bool,
     pub llm_searching: bool,
+    pub search_error: Option<String>,
+    pub freshness_warnings: Vec<String>,
     pub focus: Focus,
     pub results_pane: ResultsPane,
     pub sort_order: SortOrder,
@@ -122,34 +110,46 @@ pub struct App<'a> {
     pub latest_version: Option<String>,
     engine: &'a IndexEngine,
     all_chunks: Vec<SearchResult>,
-    cached_session_id: Option<String>,
+    cached_session_key: Option<(Source, String)>,
+    pending_search: Option<PendingSearch>,
 }
 
 impl<'a> App<'a> {
+    fn grouped_results(&self, results: &[SearchResult]) -> Vec<SearchResult> {
+        let mut grouped = dedup_by_session(results, self.sort_order);
+        grouped.truncate(50);
+        grouped
+    }
+
     pub fn new(engine: &'a IndexEngine, initial_mode: Option<&str>) -> anyhow::Result<Self> {
-        let all_chunks = engine.list_all_chunks()?;
+        let mut all_chunks = engine.list_all_chunks()?;
+        let metadata = crate::metadata::MetadataStore::open(&crate::config::metadata_db_path())?;
+        crate::commands::apply_custom_names(&metadata, &mut all_chunks)?;
 
         // Build available modes: FTS, Fuzzy, [Semantic], [LLM backends]
         let mut available_modes: Vec<SearchMode> = vec![SearchMode::Fts, SearchMode::Fuzzy];
-        if semantic::is_available() {
+        if semantic::is_available() && semantic::status().is_ok() {
             available_modes.push(SearchMode::Semantic);
         }
-        for backend in llm::detect_backends() {
+        for backend in llm::detect_backends()? {
             available_modes.push(SearchMode::Llm(backend));
         }
 
         // Resolve initial mode index
-        let mode_index = initial_mode
-            .and_then(|m| {
-                let m = m.to_lowercase();
-                available_modes.iter().position(|mode| match mode {
-                    SearchMode::Fts => m == "fts",
-                    SearchMode::Fuzzy => m == "fuzzy",
-                    SearchMode::Semantic => m == "semantic",
-                    SearchMode::Llm(_) => m == "llm",
-                })
-            })
-            .unwrap_or(0);
+        let mode_index = match initial_mode.map(str::to_lowercase).as_deref() {
+            None | Some("fts") => 0,
+            Some("fuzzy") => 1,
+            Some("semantic") => available_modes
+                .iter()
+                .position(|mode| matches!(mode, SearchMode::Semantic))
+                .ok_or_else(|| anyhow::anyhow!("Semantic search mode is unavailable"))?,
+            Some("llm") => available_modes
+                .iter()
+                .position(|mode| matches!(mode, SearchMode::Llm(_)))
+                .ok_or_else(|| anyhow::anyhow!("LLM search mode is unavailable"))?,
+            Some(other) => anyhow::bail!("Unknown search mode: {other}"),
+        };
+        let freshness_warnings = freshness_warnings(engine)?;
 
         // Show all sessions initially (deduplicated)
         let results = dedup_by_session(&all_chunks, SortOrder::TimeDesc);
@@ -167,6 +167,8 @@ impl<'a> App<'a> {
             mode_index,
             semantic_searching: false,
             llm_searching: false,
+            search_error: None,
+            freshness_warnings,
             focus: Focus::Search,
             results_pane: ResultsPane::List,
             sort_order: SortOrder::TimeDesc,
@@ -179,7 +181,8 @@ impl<'a> App<'a> {
             latest_version: None,
             engine,
             all_chunks,
-            cached_session_id: None,
+            cached_session_key: None,
+            pending_search: None,
         };
 
         app.load_detail();
@@ -191,6 +194,8 @@ impl<'a> App<'a> {
     }
 
     pub fn on_input_changed(&mut self) {
+        self.cancel_pending_search();
+        self.search_error = None;
         self.selected = 0;
         self.detail_scroll = 0;
 
@@ -208,23 +213,12 @@ impl<'a> App<'a> {
         self.load_detail();
     }
 
-    /// Mark that semantic search should be triggered on next tick.
     pub fn request_semantic_search(&mut self) {
         if self.input.is_empty() {
             self.results = dedup_by_session(&self.all_chunks, self.sort_order);
             self.load_detail();
             return;
         }
-        self.semantic_searching = true;
-    }
-
-    /// Actually run the semantic search (called from event loop after UI redraw).
-    pub fn run_pending_semantic_search(&mut self) {
-        if !self.semantic_searching {
-            return;
-        }
-        self.semantic_searching = false;
-
         let params = SearchParams {
             query: self.input.clone(),
             limit: 50,
@@ -234,77 +228,109 @@ impl<'a> App<'a> {
             before: None,
         };
 
-        match semantic::search(&params) {
-            Ok(results) => self.results = dedup_by_session(&results, self.sort_order),
-            Err(_) => self.results.clear(),
-        }
-
-        self.selected = 0;
-        self.detail_scroll = 0;
-        self.load_detail();
+        self.cancel_pending_search();
+        let (sender, receiver) = mpsc::channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = Arc::clone(&cancelled);
+        std::thread::spawn(move || {
+            let result =
+                semantic::search_cancellable(&params, &worker_cancelled).and_then(|mut results| {
+                    let store =
+                        crate::metadata::MetadataStore::open(&crate::config::metadata_db_path())?;
+                    crate::commands::apply_custom_names(&store, &mut results)?;
+                    Ok(results)
+                });
+            let _ = sender.send(result);
+        });
+        self.semantic_searching = true;
+        self.pending_search = Some((receiver, cancelled));
     }
 
-    /// Mark that LLM search should be triggered on next tick.
     pub fn request_llm_search(&mut self) {
         if self.input.is_empty() {
             self.results = dedup_by_session(&self.all_chunks, self.sort_order);
             self.load_detail();
             return;
         }
-        self.llm_searching = true;
-    }
-
-    /// Actually run the LLM search (called from event loop after UI redraw).
-    /// The LLM generates FTS queries, which are then executed and merged.
-    pub fn run_pending_llm_search(&mut self) {
-        if !self.llm_searching {
-            return;
-        }
-        self.llm_searching = false;
-
         let backend = match self.search_mode().clone() {
             SearchMode::Llm(b) => b,
             _ => return,
         };
 
-        let prompt = llm::build_query_gen_prompt(&self.input);
-
-        let queries = match llm::invoke(&backend, &prompt) {
-            Ok(response) => {
-                let parsed = llm::parse_query_gen_response(&response);
-                if parsed.is_empty() {
-                    // Fallback: use the original query as-is
-                    vec![self.input.clone()]
-                } else {
-                    parsed
-                }
-            }
-            Err(_) => {
-                // On error, fall back to plain FTS with user query
-                vec![self.input.clone()]
-            }
+        let base = SearchParams {
+            query: String::new(),
+            limit: 30,
+            source: None,
+            project: None,
+            after: None,
+            before: None,
         };
 
-        // Run each generated query and merge results
-        let mut all_results = Vec::new();
-        for query in queries {
-            let params = SearchParams {
-                query,
-                limit: 30,
-                source: None,
-                project: None,
-                after: None,
-                before: None,
-            };
-            if let Ok(results) = self.engine.search(&params) {
-                all_results.extend(results);
-            }
-        }
+        self.cancel_pending_search();
+        let query = self.input.clone();
+        let (sender, receiver) = mpsc::channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = Arc::clone(&cancelled);
+        std::thread::spawn(move || {
+            let result = IndexEngine::open(&crate::config::data_dir()).and_then(|engine| {
+                let mut expanded = llm::expanded_search_cancellable(
+                    &engine,
+                    &backend,
+                    &query,
+                    &base,
+                    &worker_cancelled,
+                )?;
+                let store =
+                    crate::metadata::MetadataStore::open(&crate::config::metadata_db_path())?;
+                let metadata_params = SearchParams {
+                    query: query.clone(),
+                    ..base.clone()
+                };
+                expanded
+                    .results
+                    .extend(crate::commands::metadata_search_matches(
+                        &engine,
+                        &store,
+                        &metadata_params,
+                    )?);
+                crate::commands::apply_custom_names(&store, &mut expanded.results)?;
+                Ok(expanded.results)
+            });
+            let _ = sender.send(result);
+        });
+        self.llm_searching = true;
+        self.pending_search = Some((receiver, cancelled));
+    }
 
-        self.results = dedup_by_session_best_score(&all_results, self.sort_order);
-        self.selected = 0;
-        self.detail_scroll = 0;
-        self.load_detail();
+    pub fn cancel_pending_search(&mut self) {
+        if let Some((_, cancelled)) = self.pending_search.take() {
+            cancelled.store(true, Ordering::Relaxed);
+        }
+        self.semantic_searching = false;
+        self.llm_searching = false;
+    }
+
+    pub fn poll_pending_search(&mut self) {
+        let result = self
+            .pending_search
+            .as_ref()
+            .and_then(|(receiver, _)| receiver.try_recv().ok());
+        let Some(result) = result else {
+            return;
+        };
+        self.pending_search = None;
+        self.semantic_searching = false;
+        self.llm_searching = false;
+        match result {
+            Ok(results) => {
+                self.results = self.grouped_results(&results);
+                self.search_error = None;
+                self.selected = 0;
+                self.detail_scroll = 0;
+                self.load_detail();
+            }
+            Err(error) => self.search_error = Some(error.to_string()),
+        }
     }
 
     fn search_fts(&mut self) {
@@ -317,9 +343,12 @@ impl<'a> App<'a> {
             before: None,
         };
 
-        match self.engine.search(&params) {
-            Ok(results) => self.results = dedup_by_session(&results, self.sort_order),
-            Err(_) => self.results.clear(),
+        match self.search_with_metadata(&params, false) {
+            Ok(results) => {
+                self.results = self.grouped_results(&results);
+                self.search_error = None;
+            }
+            Err(error) => self.search_error = Some(error.to_string()),
         }
     }
 
@@ -333,35 +362,63 @@ impl<'a> App<'a> {
             before: None,
         };
 
-        match self.engine.search_fuzzy(&params) {
-            Ok(results) => self.results = dedup_by_session(&results, self.sort_order),
-            Err(_) => self.results.clear(),
+        match self.search_with_metadata(&params, true) {
+            Ok(results) => {
+                self.results = self.grouped_results(&results);
+                self.search_error = None;
+            }
+            Err(error) => self.search_error = Some(error.to_string()),
         }
+    }
+
+    fn search_with_metadata(
+        &self,
+        params: &SearchParams,
+        fuzzy: bool,
+    ) -> anyhow::Result<Vec<SearchResult>> {
+        let mut results = if fuzzy {
+            self.engine.search_fuzzy(params)?
+        } else {
+            self.engine.search(params)?
+        };
+        let store = crate::metadata::MetadataStore::open(&crate::config::metadata_db_path())?;
+        results.extend(crate::commands::metadata_search_matches(
+            self.engine,
+            &store,
+            params,
+        )?);
+        crate::commands::apply_custom_names(&store, &mut results)?;
+        Ok(results)
     }
 
     pub fn load_detail(&mut self) {
         if self.results.is_empty() {
             self.detail_chunks.clear();
-            self.cached_session_id = None;
+            self.cached_session_key = None;
             return;
         }
 
-        let session_id = &self.results[self.selected].session_id;
+        let selected = &self.results[self.selected];
+        let session_id = &selected.session_id;
+        let source = selected.source;
 
         // Cache: don't reload if same session
-        if self.cached_session_id.as_deref() == Some(session_id) {
+        if self.cached_session_key.as_ref() == Some(&(source, session_id.clone())) {
             return;
         }
 
-        match self.engine.get_session_chunks(session_id) {
+        match self
+            .engine
+            .get_session_chunks_for_source(session_id, source)
+        {
             Ok(chunks) => {
                 self.detail_chunks = chunks;
                 self.detail_scroll = 0;
-                self.cached_session_id = Some(session_id.clone());
+                self.cached_session_key = Some((source, session_id.clone()));
             }
             Err(_) => {
                 self.detail_chunks.clear();
-                self.cached_session_id = None;
+                self.cached_session_key = None;
             }
         }
     }
@@ -388,8 +445,12 @@ impl<'a> App<'a> {
         self.detail_scroll = self.detail_scroll.saturating_sub(5);
     }
 
-    pub fn scroll_detail_top(&mut self) {
-        self.detail_scroll = 0;
+    pub fn scroll_detail_page_down(&mut self) {
+        self.detail_scroll = self.detail_scroll.saturating_add(20);
+    }
+
+    pub fn scroll_detail_page_up(&mut self) {
+        self.detail_scroll = self.detail_scroll.saturating_sub(20);
     }
 
     pub fn toggle_mode(&mut self) {
@@ -402,6 +463,40 @@ impl<'a> App<'a> {
         apply_sort(&mut self.results, self.sort_order);
         self.selected = 0;
         self.load_detail();
+    }
+
+    pub fn reindex_selected_source(&mut self) {
+        let Some(selected) = self.results.get(self.selected) else {
+            return;
+        };
+        let source = selected.source;
+        let source_reader = crate::sources::source_for(source);
+        match self.engine.index_source(source_reader.as_ref(), false) {
+            Ok(_) => {
+                if crate::semantic::is_available() {
+                    let _ = crate::semantic::trigger_index();
+                }
+                match self.engine.list_all_chunks().and_then(|mut chunks| {
+                    let store =
+                        crate::metadata::MetadataStore::open(&crate::config::metadata_db_path())?;
+                    crate::commands::apply_custom_names(&store, &mut chunks)?;
+                    Ok(chunks)
+                }) {
+                    Ok(chunks) => {
+                        self.all_chunks = chunks;
+                        self.freshness_warnings =
+                            freshness_warnings(self.engine).unwrap_or_default();
+                        self.search_error = None;
+                        self.on_input_changed();
+                    }
+                    Err(error) => self.search_error = Some(error.to_string()),
+                }
+            }
+            Err(error) => {
+                self.freshness_warnings = freshness_warnings(self.engine).unwrap_or_default();
+                self.search_error = Some(error.to_string());
+            }
+        }
     }
 
     pub fn toggle_focus(&mut self) {
@@ -433,9 +528,6 @@ impl<'a> App<'a> {
         match option {
             ResumeOption::SessionDir => {
                 if let Some(state) = self.confirm_resume.take() {
-                    if !state.session_dir_exists {
-                        let _ = std::fs::create_dir_all(&state.project);
-                    }
                     self.resume_session = Some((state.session_id, state.source, state.project));
                     self.should_quit = true;
                 }
@@ -455,79 +547,41 @@ impl<'a> App<'a> {
         }
     }
 
-    pub fn resume_command(&self) -> Option<ResumeCommand> {
+    pub fn resume_command(&self) -> Option<CommandSpec> {
         let (session_id, source, project) = self.resume_session.as_ref()?;
-        let args = match source {
-            Source::ClaudeCode => vec!["claude".into(), "--resume".into(), session_id.clone()],
-            Source::Copilot => vec!["copilot".into(), format!("--resume={session_id}")],
-            Source::OpenCode => vec!["opencode".into(), "--session".into(), session_id.clone()],
-            Source::Cursor => vec!["cursor".into(), project.clone()],
-            Source::Codex => vec!["codex".into(), "resume".into(), session_id.clone()],
-        };
-        Some(ResumeCommand {
-            args,
-            cwd: Some(project.clone()),
-        })
+        Some(sessfind_common::resume_command(
+            *source, session_id, project,
+        ))
     }
 }
 
-pub struct ResumeCommand {
-    pub args: Vec<String>,
-    /// Working directory to cd into before exec (needed for Claude Code).
-    pub cwd: Option<String>,
-}
-
-/// Apply sort order to a results vector in place.
-fn apply_sort(results: &mut [SearchResult], order: SortOrder) {
-    match order {
-        SortOrder::TimeDesc => {
-            results.sort_by(|a, b| {
-                b.timestamp.cmp(&a.timestamp).then_with(|| {
-                    b.score
-                        .partial_cmp(&a.score)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-            });
-        }
-        SortOrder::ScoreDesc => {
-            results.sort_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .then_with(|| b.timestamp.cmp(&a.timestamp))
-            });
-        }
-    }
-}
-
-/// Dedup by session, keeping the highest-scoring result per session.
-/// Final results sorted according to the given sort order.
-fn dedup_by_session(results: &[SearchResult], order: SortOrder) -> Vec<SearchResult> {
-    let mut best: HashMap<String, SearchResult> = HashMap::new();
-    for r in results {
-        best.entry(r.session_id.clone())
-            .and_modify(|existing| {
-                if r.score > existing.score {
-                    *existing = r.clone();
-                }
+fn freshness_warnings(engine: &IndexEngine) -> anyhow::Result<Vec<String>> {
+    Ok(engine
+        .source_sync_states()?
+        .into_iter()
+        .filter_map(|state| {
+            state.last_error.map(|error| {
+                let status = if state.last_success.is_some() {
+                    "stale"
+                } else {
+                    "failed"
+                };
+                format!(
+                    "{} is {status} (last success: {}): {error}",
+                    state.source,
+                    state
+                        .last_success
+                        .map(|value| value.to_rfc3339())
+                        .unwrap_or_else(|| "never".into())
+                )
             })
-            .or_insert_with(|| r.clone());
-    }
-    let mut out: Vec<SearchResult> = best.into_values().collect();
-    apply_sort(&mut out, order);
-    out
-}
-
-/// Dedup by session, keeping the highest-scoring result per session.
-/// Final results sorted according to the given sort order.
-fn dedup_by_session_best_score(results: &[SearchResult], order: SortOrder) -> Vec<SearchResult> {
-    dedup_by_session(results, order)
+        })
+        .collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
 
     #[test]
     fn search_mode_labels() {
@@ -542,54 +596,6 @@ mod tests {
         let mut backend = test_backend("claude");
         backend.model = Some("sonnet".into());
         assert_eq!(SearchMode::Llm(backend).label(), "LLM (claude:sonnet)");
-    }
-
-    #[test]
-    fn dedup_by_session_removes_duplicates() {
-        let ts = Utc::now();
-        let results = vec![
-            SearchResult {
-                chunk_id: "a:s1:0".into(),
-                session_id: "s1".into(),
-                source: Source::ClaudeCode,
-                project: "/p".into(),
-                timestamp: ts,
-                title: None,
-                snippet: "chunk 0".into(),
-                score: 1.0,
-            },
-            SearchResult {
-                chunk_id: "a:s1:1".into(),
-                session_id: "s1".into(),
-                source: Source::ClaudeCode,
-                project: "/p".into(),
-                timestamp: ts,
-                title: None,
-                snippet: "chunk 1".into(),
-                score: 0.9,
-            },
-            SearchResult {
-                chunk_id: "a:s2:0".into(),
-                session_id: "s2".into(),
-                source: Source::OpenCode,
-                project: "/q".into(),
-                timestamp: ts,
-                title: None,
-                snippet: "other".into(),
-                score: 0.8,
-            },
-        ];
-        let deduped = dedup_by_session(&results, SortOrder::ScoreDesc);
-        assert_eq!(deduped.len(), 2);
-        assert_eq!(deduped[0].session_id, "s1");
-        assert_eq!(deduped[0].chunk_id, "a:s1:0"); // keeps first
-        assert_eq!(deduped[1].session_id, "s2");
-    }
-
-    #[test]
-    fn dedup_empty() {
-        let deduped = dedup_by_session(&[], SortOrder::ScoreDesc);
-        assert!(deduped.is_empty());
     }
 
     fn test_backend(name: &str) -> LlmBackend {
@@ -621,138 +627,5 @@ mod tests {
     #[test]
     fn search_mode_semantic_label() {
         assert_eq!(SearchMode::Semantic.label(), "Semantic");
-    }
-
-    #[test]
-    fn dedup_best_score_keeps_highest() {
-        let ts = Utc::now();
-        let results = vec![
-            SearchResult {
-                chunk_id: "a:s1:0".into(),
-                session_id: "s1".into(),
-                source: Source::ClaudeCode,
-                project: "/p".into(),
-                timestamp: ts,
-                title: None,
-                snippet: "low score".into(),
-                score: 0.5,
-            },
-            SearchResult {
-                chunk_id: "a:s2:0".into(),
-                session_id: "s2".into(),
-                source: Source::OpenCode,
-                project: "/q".into(),
-                timestamp: ts,
-                title: None,
-                snippet: "other".into(),
-                score: 0.3,
-            },
-            SearchResult {
-                chunk_id: "a:s1:1".into(),
-                session_id: "s1".into(),
-                source: Source::ClaudeCode,
-                project: "/p".into(),
-                timestamp: ts,
-                title: None,
-                snippet: "high score".into(),
-                score: 0.9,
-            },
-        ];
-        let deduped = dedup_by_session_best_score(&results, SortOrder::ScoreDesc);
-        assert_eq!(deduped.len(), 2);
-        // Sorted by score descending
-        assert_eq!(deduped[0].session_id, "s1");
-        assert_eq!(deduped[0].score, 0.9);
-        assert_eq!(deduped[1].session_id, "s2");
-        assert_eq!(deduped[1].score, 0.3);
-    }
-
-    #[test]
-    fn sort_order_time_desc_sorts_by_timestamp() {
-        use chrono::Duration;
-
-        let now = Utc::now();
-        let old = now - Duration::hours(2);
-
-        let results = vec![
-            SearchResult {
-                chunk_id: "a:s1:0".into(),
-                session_id: "s1".into(),
-                source: Source::ClaudeCode,
-                project: "/p".into(),
-                timestamp: old,
-                title: None,
-                snippet: "old session".into(),
-                score: 0.9,
-            },
-            SearchResult {
-                chunk_id: "a:s2:0".into(),
-                session_id: "s2".into(),
-                source: Source::OpenCode,
-                project: "/q".into(),
-                timestamp: now,
-                title: None,
-                snippet: "new session".into(),
-                score: 0.5,
-            },
-        ];
-        let deduped = dedup_by_session(&results, SortOrder::TimeDesc);
-        assert_eq!(deduped.len(), 2);
-        // Newest first despite lower score
-        assert_eq!(deduped[0].session_id, "s2");
-        assert_eq!(deduped[1].session_id, "s1");
-    }
-
-    #[test]
-    fn sort_order_toggle_cycles() {
-        assert_eq!(SortOrder::TimeDesc.next(), SortOrder::ScoreDesc);
-        assert_eq!(SortOrder::ScoreDesc.next(), SortOrder::TimeDesc);
-    }
-
-    #[test]
-    fn sort_order_labels() {
-        assert_eq!(SortOrder::TimeDesc.label(), "Newest first");
-        assert_eq!(SortOrder::ScoreDesc.label(), "Best match");
-    }
-
-    #[test]
-    fn apply_sort_reorders_in_place() {
-        use chrono::Duration;
-
-        let now = Utc::now();
-        let old = now - Duration::hours(2);
-
-        let mut results = vec![
-            SearchResult {
-                chunk_id: "a:s1:0".into(),
-                session_id: "s1".into(),
-                source: Source::ClaudeCode,
-                project: "/p".into(),
-                timestamp: old,
-                title: None,
-                snippet: "old high score".into(),
-                score: 0.9,
-            },
-            SearchResult {
-                chunk_id: "a:s2:0".into(),
-                session_id: "s2".into(),
-                source: Source::OpenCode,
-                project: "/q".into(),
-                timestamp: now,
-                title: None,
-                snippet: "new low score".into(),
-                score: 0.5,
-            },
-        ];
-
-        // ScoreDesc: highest score first
-        apply_sort(&mut results, SortOrder::ScoreDesc);
-        assert_eq!(results[0].session_id, "s1");
-        assert_eq!(results[1].session_id, "s2");
-
-        // TimeDesc: newest first
-        apply_sort(&mut results, SortOrder::TimeDesc);
-        assert_eq!(results[0].session_id, "s2");
-        assert_eq!(results[1].session_id, "s1");
     }
 }

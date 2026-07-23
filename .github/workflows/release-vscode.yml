@@ -1,0 +1,40 @@
+name: Release VS Code Extension
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'editors/vscode/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'release-please-config.json'
+      - '.release-please-manifest.json'
+      - '.github/workflows/release-vscode.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-vscode-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release Please
+    if: ${{ !github.event.repository.fork }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Create or update release PR and GitHub release
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

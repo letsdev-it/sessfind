@@ -1,6 +1,7 @@
 use anyhow::Result;
+use std::collections::HashSet;
 use std::path::Path;
-use tantivy::collector::TopDocs;
+use tantivy::collector::{Count, TopDocs};
 use tantivy::query::{
     AllQuery, BooleanQuery, EmptyQuery, FuzzyTermQuery, Occur, PhrasePrefixQuery, Query,
     QueryParser,
@@ -10,7 +11,7 @@ use tantivy::tokenizer::{LowerCaser, RemoveLongFilter, SimpleTokenizer, Stemmer,
 use tantivy::{DateTime as TantivyDateTime, Index, IndexWriter};
 
 use crate::indexer::chunker;
-use crate::indexer::state::IndexState;
+use crate::indexer::state::{IndexState, SourceSyncState};
 use crate::models::{Chunk, SearchResult, Session, Source};
 use crate::sources::SessionSource;
 
@@ -26,6 +27,7 @@ pub struct IndexEngine {
 fn build_schema() -> Schema {
     let mut builder = Schema::builder();
     builder.add_text_field("chunk_id", STRING | STORED);
+    builder.add_text_field("session_key", STRING | STORED);
     builder.add_text_field("session_id", STRING | STORED);
     builder.add_text_field("source", STRING | STORED);
     builder.add_text_field("project", STRING | STORED);
@@ -38,6 +40,12 @@ fn build_schema() -> Schema {
         )
         .set_stored();
     builder.add_text_field("text", text_options);
+    let search_text_options = TextOptions::default().set_indexing_options(
+        TextFieldIndexing::default()
+            .set_tokenizer(TOKENIZER_NAME)
+            .set_index_option(IndexRecordOption::WithFreqsAndPositions),
+    );
+    builder.add_text_field("search_text", search_text_options);
 
     builder.add_date_field("timestamp", INDEXED | STORED | FAST);
     builder.add_text_field("title", STRING | STORED);
@@ -69,7 +77,7 @@ impl IndexEngine {
             // use our tokenizer, wipe and recreate so stemming takes effect.
             let needs_rebuild = {
                 let s = existing.schema();
-                let ok = s.get_field("text").ok().is_some_and(|f| {
+                let tokenizer_ok = s.get_field("text").ok().is_some_and(|f| {
                     if let FieldType::Str(ref opts) = *s.get_field_entry(f).field_type() {
                         opts.get_indexing_options()
                             .is_some_and(|o| o.tokenizer() == TOKENIZER_NAME)
@@ -77,7 +85,9 @@ impl IndexEngine {
                         false
                     }
                 });
-                !ok
+                !tokenizer_ok
+                    || s.get_field("session_key").is_err()
+                    || s.get_field("search_text").is_err()
             };
             if needs_rebuild {
                 drop(existing);
@@ -111,28 +121,56 @@ impl IndexEngine {
     }
 
     pub fn index_source(&self, source: &dyn SessionSource, force: bool) -> Result<IndexStats> {
+        let source_name = source.name();
+        match self.index_source_inner(source, force) {
+            Ok(stats) => Ok(stats),
+            Err(error) => {
+                let _ = self
+                    .state
+                    .mark_source_failure(source_name, &error.to_string());
+                Err(error)
+            }
+        }
+    }
+
+    fn index_source_inner(&self, source: &dyn SessionSource, force: bool) -> Result<IndexStats> {
+        let source_name = source.name();
         let sessions = source.list_sessions()?;
-        let mut stats = IndexStats {
-            total_sessions: sessions.len(),
-            ..Default::default()
-        };
+        let mut stats = IndexStats::default();
 
-        let sessions_to_index: Vec<&Session> = if force {
-            sessions.iter().collect()
-        } else {
-            sessions
-                .iter()
-                .filter(|s| !self.state.is_current(s))
-                .collect()
-        };
+        let indexed_ids = self.state.session_ids(source_name)?;
+        let discovered_ids: HashSet<String> = sessions
+            .iter()
+            .map(|session| session.session_id.clone())
+            .collect();
+        let removed_ids: Vec<String> = indexed_ids.difference(&discovered_ids).cloned().collect();
+        let sessions_to_index: Vec<&Session> = sessions
+            .iter()
+            .filter(|session| force || !self.state.is_current(session))
+            .collect();
 
-        stats.new_sessions = sessions_to_index.len();
-        if sessions_to_index.is_empty() {
+        for session in &sessions {
+            if self.state.is_current(session) && !force {
+                stats.unchanged_sessions += 1;
+            }
+        }
+        stats.removed_sessions = removed_ids.len();
+
+        if sessions_to_index.is_empty() && removed_ids.is_empty() {
+            stats.total_chunks = self.chunk_count(Some(source_name))?;
+            self.state.mark_source_success(source_name)?;
             return Ok(stats);
         }
 
         let mut writer: IndexWriter = self.index.writer(50_000_000)?;
-
+        let session_key_field = self.schema.get_field("session_key").unwrap();
+        for session_id in &removed_ids {
+            writer.delete_term(tantivy::Term::from_field_text(
+                session_key_field,
+                &format!("{source_name}:{session_id}"),
+            ));
+        }
+        let mut indexed_sessions = Vec::new();
         for session in &sessions_to_index {
             let messages = match source.load_messages(session) {
                 Ok(m) => m,
@@ -141,38 +179,50 @@ impl IndexEngine {
                         "Warning: failed to load session {}: {}",
                         session.session_id, e
                     );
+                    stats.skipped_sessions += 1;
                     continue;
                 }
             };
 
             let chunks = chunker::chunk_session(session, &messages);
             stats.total_chunks += chunks.len();
+            if indexed_ids.contains(&session.session_id) {
+                stats.updated_sessions += 1;
+            } else {
+                stats.new_sessions += 1;
+            }
 
             // Delete old chunks for this session (for re-indexing)
-            let _chunk_id_field = self.schema.get_field("chunk_id").unwrap();
-            let session_id_field = self.schema.get_field("session_id").unwrap();
             writer.delete_term(tantivy::Term::from_field_text(
-                session_id_field,
-                &session.session_id,
+                session_key_field,
+                &format!("{}:{}", session.source.as_str(), session.session_id),
             ));
 
             for chunk in &chunks {
                 self.add_chunk(&mut writer, chunk)?;
             }
 
-            self.state.mark_indexed(session)?;
+            indexed_sessions.push(*session);
         }
 
         writer.commit()?;
+        for session in indexed_sessions {
+            self.state.mark_indexed(session)?;
+        }
+        self.state.remove_sessions(source_name, &removed_ids)?;
+        stats.total_chunks = self.chunk_count(Some(source_name))?;
+        self.state.mark_source_success(source_name)?;
         Ok(stats)
     }
 
     fn add_chunk(&self, writer: &mut IndexWriter, chunk: &Chunk) -> Result<()> {
         let chunk_id = self.schema.get_field("chunk_id").unwrap();
+        let session_key = self.schema.get_field("session_key").unwrap();
         let session_id = self.schema.get_field("session_id").unwrap();
         let source = self.schema.get_field("source").unwrap();
         let project = self.schema.get_field("project").unwrap();
         let text = self.schema.get_field("text").unwrap();
+        let search_text = self.schema.get_field("search_text").unwrap();
         let timestamp = self.schema.get_field("timestamp").unwrap();
         let title = self.schema.get_field("title").unwrap();
 
@@ -180,10 +230,23 @@ impl IndexEngine {
 
         let mut doc = tantivy::TantivyDocument::new();
         doc.add_text(chunk_id, &chunk.chunk_id);
+        doc.add_text(
+            session_key,
+            format!("{}:{}", chunk.source.as_str(), chunk.session_id),
+        );
         doc.add_text(session_id, &chunk.session_id);
         doc.add_text(source, chunk.source.as_str());
         doc.add_text(project, &chunk.project);
         doc.add_text(text, &chunk.text);
+        doc.add_text(
+            search_text,
+            format!(
+                "{}\n{}\n{}",
+                chunk.title.as_deref().unwrap_or(""),
+                chunk.project,
+                chunk.text
+            ),
+        );
         doc.add_date(timestamp, ts);
         doc.add_text(title, chunk.title.as_deref().unwrap_or(""));
 
@@ -195,7 +258,7 @@ impl IndexEngine {
         let reader = self.index.reader()?;
         let searcher = reader.searcher();
 
-        let text_field = self.schema.get_field("text").unwrap();
+        let text_field = self.schema.get_field("search_text").unwrap();
         let query = parse_fts_user_query(&self.index, text_field, &params.query)?;
 
         let top_docs = searcher.search(&query, &TopDocs::with_limit(params.limit * 3))?;
@@ -210,7 +273,7 @@ impl IndexEngine {
         let reader = self.index.reader()?;
         let searcher = reader.searcher();
 
-        let text_field = self.schema.get_field("text").unwrap();
+        let text_field = self.schema.get_field("search_text").unwrap();
 
         // Tokenize query: lowercase and split on whitespace
         let terms: Vec<String> = params
@@ -334,10 +397,6 @@ impl IndexEngine {
                 snippet,
                 score,
             });
-
-            if results.len() >= params.limit {
-                break;
-            }
         }
 
         Ok(results)
@@ -424,6 +483,16 @@ impl IndexEngine {
         Ok(results)
     }
 
+    pub fn get_session_chunks_for_source(
+        &self,
+        session_id: &str,
+        source: Source,
+    ) -> Result<Vec<SearchResult>> {
+        let mut chunks = self.get_session_chunks(session_id)?;
+        chunks.retain(|chunk| chunk.source == source);
+        Ok(chunks)
+    }
+
     pub fn list_all_chunks(&self) -> Result<Vec<SearchResult>> {
         let reader = self.index.reader()?;
         let searcher = reader.searcher();
@@ -501,6 +570,15 @@ impl IndexEngine {
 
         results.sort_by_key(|r| std::cmp::Reverse(r.timestamp));
         Ok(results)
+    }
+
+    /// All indexed sessions, one entry per session, newest first.
+    pub fn list_sessions(&self) -> Result<Vec<SearchResult>> {
+        let chunks = self.list_all_chunks()?;
+        Ok(crate::search::results::dedup_by_session(
+            &chunks,
+            crate::search::results::SortOrder::TimeDesc,
+        ))
     }
 
     /// Dump all chunks with full text (for semantic plugin).
@@ -589,6 +667,25 @@ impl IndexEngine {
 
     pub fn session_count(&self, source: Option<&str>) -> Result<usize> {
         self.state.count(source)
+    }
+
+    fn chunk_count(&self, source: Option<&str>) -> Result<usize> {
+        let reader = self.index.reader()?;
+        let searcher = reader.searcher();
+        if let Some(source) = source {
+            let field = self.schema.get_field("source").unwrap();
+            let query = tantivy::query::TermQuery::new(
+                tantivy::Term::from_field_text(field, source),
+                IndexRecordOption::Basic,
+            );
+            Ok(searcher.search(&query, &Count)?)
+        } else {
+            Ok(searcher.search(&AllQuery, &Count)?)
+        }
+    }
+
+    pub fn source_sync_states(&self) -> Result<Vec<SourceSyncState>> {
+        self.state.source_sync_states()
     }
 }
 
@@ -687,8 +784,11 @@ fn make_snippet(text: &str, query: &str, max_len: usize) -> String {
 
 #[derive(Debug, Default)]
 pub struct IndexStats {
-    pub total_sessions: usize,
     pub new_sessions: usize,
+    pub updated_sessions: usize,
+    pub removed_sessions: usize,
+    pub unchanged_sessions: usize,
+    pub skipped_sessions: usize,
     pub total_chunks: usize,
 }
 
@@ -697,7 +797,50 @@ pub use crate::models::SearchParams;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{Message, Role};
+    use chrono::Utc;
     use tantivy::collector::TopDocs;
+    use tempfile::TempDir;
+
+    struct TestSource {
+        name: &'static str,
+        sessions: Vec<Session>,
+        text: &'static str,
+    }
+
+    impl SessionSource for TestSource {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn list_sessions(&self) -> Result<Vec<Session>> {
+            Ok(self.sessions.clone())
+        }
+
+        fn load_messages(&self, _session: &Session) -> Result<Vec<Message>> {
+            Ok(vec![Message {
+                role: Role::User,
+                text: self.text.into(),
+                timestamp: None,
+                tool_names: vec![],
+            }])
+        }
+    }
+
+    fn test_session(source: Source, id: &str, mtime: i64) -> Session {
+        Session {
+            source,
+            session_id: id.into(),
+            project: format!("/project/{}", source.as_str()),
+            directory: format!("/project/{}", source.as_str()),
+            title: Some(format!("{} title", source.as_str())),
+            started_at: Utc::now(),
+            model: None,
+            file_path: format!("/tmp/{}/{id}", source.as_str()),
+            file_mtime: mtime,
+            file_size: 10,
+        }
+    }
 
     fn make_test_index() -> (Index, Schema, Field) {
         let schema = build_schema();
@@ -747,5 +890,95 @@ mod tests {
         let searcher = reader.searcher();
         let results = searcher.search(&q, &TopDocs::with_limit(10)).unwrap();
         assert!(!results.is_empty(), "runs should match running via stemmer");
+    }
+
+    #[test]
+    fn reconciliation_removes_only_the_selected_source() {
+        let temp = TempDir::new().unwrap();
+        let engine = IndexEngine::open(temp.path()).unwrap();
+        let claude = TestSource {
+            name: "claude",
+            sessions: vec![test_session(Source::ClaudeCode, "shared", 1)],
+            text: "claude conversation",
+        };
+        let codex = TestSource {
+            name: "codex",
+            sessions: vec![test_session(Source::Codex, "shared", 1)],
+            text: "codex conversation",
+        };
+
+        engine.index_source(&claude, false).unwrap();
+        engine.index_source(&codex, false).unwrap();
+        assert_eq!(
+            engine
+                .get_session_chunks_for_source("shared", Source::ClaudeCode)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            engine
+                .get_session_chunks_for_source("shared", Source::Codex)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let removed = TestSource {
+            name: "claude",
+            sessions: vec![],
+            text: "",
+        };
+        let stats = engine.index_source(&removed, false).unwrap();
+        assert_eq!(stats.removed_sessions, 1);
+        assert!(
+            engine
+                .get_session_chunks_for_source("shared", Source::ClaudeCode)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            engine
+                .get_session_chunks_for_source("shared", Source::Codex)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn source_failure_preserves_last_success_and_marks_stale() {
+        struct FailingSource;
+        impl SessionSource for FailingSource {
+            fn name(&self) -> &'static str {
+                "claude"
+            }
+            fn list_sessions(&self) -> Result<Vec<Session>> {
+                anyhow::bail!("locked")
+            }
+            fn load_messages(&self, _session: &Session) -> Result<Vec<Message>> {
+                unreachable!()
+            }
+        }
+
+        let temp = TempDir::new().unwrap();
+        let engine = IndexEngine::open(temp.path()).unwrap();
+        let source = TestSource {
+            name: "claude",
+            sessions: vec![test_session(Source::ClaudeCode, "one", 1)],
+            text: "hello",
+        };
+        engine.index_source(&source, false).unwrap();
+        assert!(engine.index_source(&FailingSource, false).is_err());
+
+        let state = engine
+            .source_sync_states()
+            .unwrap()
+            .into_iter()
+            .find(|state| state.source == "claude")
+            .unwrap();
+        assert!(state.last_success.is_some());
+        assert_eq!(state.last_error.as_deref(), Some("locked"));
+        assert_eq!(engine.session_count(Some("claude")).unwrap(), 1);
     }
 }

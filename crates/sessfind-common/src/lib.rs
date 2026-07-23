@@ -84,6 +84,161 @@ pub struct SearchParams {
     pub before: Option<DateTime<Utc>>,
 }
 
+// ── CommandSpec (resume / new-session commands) ──
+
+/// A command to launch in a terminal: `args[0]` is the binary, the rest are
+/// its arguments. `cwd` is the directory the command must run in (Claude Code
+/// requires being in the project directory to find the session).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandSpec {
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+}
+
+/// Build the command that resumes an existing session in the given directory.
+pub fn resume_command(source: Source, session_id: &str, dir: &str) -> CommandSpec {
+    let args = match source {
+        Source::ClaudeCode => vec!["claude".into(), "--resume".into(), session_id.into()],
+        Source::Copilot => vec!["copilot".into(), format!("--resume={session_id}")],
+        Source::OpenCode => vec!["opencode".into(), "--session".into(), session_id.into()],
+        Source::Cursor => vec!["cursor".into(), dir.into()],
+        Source::Codex => vec!["codex".into(), "resume".into(), session_id.into()],
+    };
+    CommandSpec {
+        args,
+        cwd: Some(dir.into()),
+    }
+}
+
+/// Build the command that opens an interactive session pre-loaded with a
+/// prompt ("chat about this project"). Returns None for tools that cannot
+/// take an initial prompt in interactive mode.
+pub fn chat_command(source: Source, dir: &str, prompt: &str) -> Option<CommandSpec> {
+    let args = match source {
+        Source::ClaudeCode => vec!["claude".into(), prompt.into()],
+        Source::Codex => vec!["codex".into(), prompt.into()],
+        Source::OpenCode => vec!["opencode".into(), "--prompt".into(), prompt.into()],
+        // Copilot's interactive mode takes no initial prompt; Cursor is an editor.
+        Source::Copilot | Source::Cursor => return None,
+    };
+    Some(CommandSpec {
+        args,
+        cwd: Some(dir.into()),
+    })
+}
+
+/// Build the command that starts a fresh session of the given tool in a directory.
+pub fn new_session_command(source: Source, dir: &str) -> CommandSpec {
+    let args = match source {
+        Source::ClaudeCode => vec!["claude".into()],
+        Source::Copilot => vec!["copilot".into()],
+        Source::OpenCode => vec!["opencode".into()],
+        Source::Cursor => vec!["cursor".into(), dir.into()],
+        Source::Codex => vec!["codex".into()],
+    };
+    CommandSpec {
+        args,
+        cwd: Some(dir.into()),
+    }
+}
+
+/// Stable identity used by sessfind-owned metadata and frontends.
+///
+/// Native session ids are only unique within their owning tool, so every
+/// sessfind-owned reference must include the source as well.
+pub fn session_key(source: Source, session_id: &str) -> String {
+    format!("{}:{session_id}", source.as_str())
+}
+
+// ── JSON API types (consumed by the VS Code extension and future frontends) ──
+//
+// Evolution contract: changes to these types must be additive-only. Breaking
+// changes require bumping `Capabilities::json_api_version`.
+
+/// One indexed session, as listed by `sessfind sessions list --json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummary {
+    /// Source-qualified stable identity (`<source>:<native session id>`).
+    #[serde(default)]
+    pub session_key: String,
+    pub session_id: String,
+    pub source: Source,
+    /// Absolute directory path the session ran in (drives grouping and resume cwd).
+    pub project: String,
+    /// Display title: the user's custom name when set, else the tool's title.
+    pub title: Option<String>,
+    /// User-assigned name override, when one exists (also reflected in `title`).
+    #[serde(default)]
+    pub custom_name: Option<String>,
+    pub timestamp: DateTime<Utc>,
+    pub snippet: String,
+    /// Tags attached directly to this session (excludes inherited project tags).
+    #[serde(default)]
+    pub direct_tags: Vec<String>,
+    /// Effective tags: direct tags plus tags inherited from the project.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    pub resume: CommandSpec,
+    pub new_session: CommandSpec,
+}
+
+/// A project derived automatically by grouping sessions on their directory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectGroup {
+    pub path: String,
+    /// Last path component, for display.
+    pub name: String,
+    pub session_count: usize,
+    pub last_activity: DateTime<Utc>,
+    pub sources: Vec<Source>,
+    /// Tags attached to the whole directory (inherited by its sessions).
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// LLM-generated project summary, when one has been produced.
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// An installed AI CLI tool, with a ready-to-run new-session command for a
+/// given directory. Produced by `sessfind tools list --dir <dir> --json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolInfo {
+    pub name: String,
+    pub new_session: CommandSpec,
+    /// Whether the tool can start an interactive session with an initial
+    /// prompt (used for "chat about this project").
+    #[serde(default)]
+    pub chat_capable: bool,
+}
+
+/// A tag with the number of sessions carrying it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagCount {
+    pub tag: String,
+    pub session_count: usize,
+}
+
+/// Which search methods this binary can serve right now.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchMethods {
+    pub fts: bool,
+    pub fuzzy: bool,
+    pub semantic: bool,
+    /// Names of detected LLM backends (empty = LLM search unavailable).
+    pub llm: Vec<String>,
+}
+
+/// Output of `sessfind capabilities` — lets clients gate features on what the
+/// installed binary supports.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Capabilities {
+    pub version: String,
+    pub json_api_version: u32,
+    pub features: Vec<String>,
+    pub search_methods: SearchMethods,
+    pub data_dir: String,
+}
+
 // ── DumpChunk (for dump-chunks JSONL exchange) ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -209,6 +364,136 @@ mod tests {
         assert_eq!(back.query, "rust async");
         assert_eq!(back.limit, 10);
         assert_eq!(back.source.as_deref(), Some("claude"));
+    }
+
+    #[test]
+    fn resume_command_per_source() {
+        let cmd = resume_command(Source::ClaudeCode, "abc", "/proj");
+        assert_eq!(cmd.args, vec!["claude", "--resume", "abc"]);
+        assert_eq!(cmd.cwd.as_deref(), Some("/proj"));
+
+        let cmd = resume_command(Source::Copilot, "abc", "/proj");
+        assert_eq!(cmd.args, vec!["copilot", "--resume=abc"]);
+
+        let cmd = resume_command(Source::OpenCode, "abc", "/proj");
+        assert_eq!(cmd.args, vec!["opencode", "--session", "abc"]);
+
+        let cmd = resume_command(Source::Cursor, "abc", "/proj");
+        assert_eq!(cmd.args, vec!["cursor", "/proj"]);
+
+        let cmd = resume_command(Source::Codex, "abc", "/proj");
+        assert_eq!(cmd.args, vec!["codex", "resume", "abc"]);
+    }
+
+    #[test]
+    fn new_session_command_per_source() {
+        let cmd = new_session_command(Source::ClaudeCode, "/proj");
+        assert_eq!(cmd.args, vec!["claude"]);
+        assert_eq!(cmd.cwd.as_deref(), Some("/proj"));
+
+        let cmd = new_session_command(Source::Cursor, "/proj");
+        assert_eq!(cmd.args, vec!["cursor", "/proj"]);
+
+        let cmd = new_session_command(Source::Codex, "/proj");
+        assert_eq!(cmd.args, vec!["codex"]);
+    }
+
+    #[test]
+    fn session_summary_serde_roundtrip() {
+        let summary = SessionSummary {
+            session_key: "claude:abc".into(),
+            session_id: "abc".into(),
+            source: Source::ClaudeCode,
+            project: "/home/user/project".into(),
+            title: Some("Test".into()),
+            custom_name: None,
+            timestamp: Utc::now(),
+            snippet: "USER: hello".into(),
+            direct_tags: vec!["work".into()],
+            tags: vec!["work".into()],
+            resume: resume_command(Source::ClaudeCode, "abc", "/home/user/project"),
+            new_session: new_session_command(Source::ClaudeCode, "/home/user/project"),
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let back: SessionSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.session_id, "abc");
+        assert_eq!(back.tags, vec!["work"]);
+        assert_eq!(back.resume.args, vec!["claude", "--resume", "abc"]);
+    }
+
+    #[test]
+    fn session_summary_tags_default_to_empty() {
+        // Older producers may omit `tags` — clients must still parse.
+        let json = r#"{
+            "session_id": "abc", "source": "claude", "project": "/p",
+            "title": null, "timestamp": "2025-01-15T10:30:00Z", "snippet": "s",
+            "resume": {"args": ["claude"], "cwd": "/p"},
+            "new_session": {"args": ["claude"], "cwd": "/p"}
+        }"#;
+        let back: SessionSummary = serde_json::from_str(json).unwrap();
+        assert!(back.tags.is_empty());
+        assert!(back.direct_tags.is_empty());
+        assert!(back.session_key.is_empty());
+        assert!(back.custom_name.is_none());
+    }
+
+    #[test]
+    fn chat_command_per_source() {
+        let cmd = chat_command(Source::ClaudeCode, "/proj", "hello").unwrap();
+        assert_eq!(cmd.args, vec!["claude", "hello"]);
+        assert_eq!(cmd.cwd.as_deref(), Some("/proj"));
+
+        let cmd = chat_command(Source::OpenCode, "/proj", "hello").unwrap();
+        assert_eq!(cmd.args, vec!["opencode", "--prompt", "hello"]);
+
+        let cmd = chat_command(Source::Codex, "/proj", "hello").unwrap();
+        assert_eq!(cmd.args, vec!["codex", "hello"]);
+
+        assert!(chat_command(Source::Copilot, "/proj", "hello").is_none());
+        assert!(chat_command(Source::Cursor, "/proj", "hello").is_none());
+    }
+
+    #[test]
+    fn tool_info_serde_roundtrip() {
+        let tool = ToolInfo {
+            name: "claude".into(),
+            new_session: new_session_command(Source::ClaudeCode, "/proj"),
+            chat_capable: true,
+        };
+        let json = serde_json::to_string(&tool).unwrap();
+        let back: ToolInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.name, "claude");
+        assert_eq!(back.new_session.args, vec!["claude"]);
+        assert_eq!(back.new_session.cwd.as_deref(), Some("/proj"));
+    }
+
+    #[test]
+    fn capabilities_serde_roundtrip() {
+        let caps = Capabilities {
+            version: "0.9.0".into(),
+            json_api_version: 1,
+            features: vec!["search-json".into()],
+            search_methods: SearchMethods {
+                fts: true,
+                fuzzy: true,
+                semantic: false,
+                llm: vec!["claude".into()],
+            },
+            data_dir: "/data".into(),
+        };
+        let json = serde_json::to_string(&caps).unwrap();
+        let back: Capabilities = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.json_api_version, 1);
+        assert_eq!(back.search_methods.llm, vec!["claude"]);
+    }
+
+    #[test]
+    fn command_spec_serde_roundtrip() {
+        let cmd = resume_command(Source::ClaudeCode, "abc", "/proj");
+        let json = serde_json::to_string(&cmd).unwrap();
+        let back: CommandSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.args, cmd.args);
+        assert_eq!(back.cwd, cmd.cwd);
     }
 
     #[test]

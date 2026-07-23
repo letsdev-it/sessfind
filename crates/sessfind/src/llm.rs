@@ -1,8 +1,14 @@
 use std::path::PathBuf;
+use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use wait_timeout::ChildExt;
 
 use crate::config::Config;
+use crate::indexer::engine::{IndexEngine, SearchParams};
+use crate::models::SearchResult;
 
 /// An LLM CLI backend that can be used for agentic search.
 #[derive(Debug, Clone)]
@@ -27,8 +33,8 @@ impl LlmBackend {
 
 /// Detect installed LLM CLI tools that support headless mode.
 /// Loads config to resolve per-backend model overrides.
-pub fn detect_backends() -> Vec<LlmBackend> {
-    let config = Config::load();
+pub fn detect_backends() -> Result<Vec<LlmBackend>> {
+    let config = Config::load()?;
     let mut backends = Vec::new();
 
     let definitions: &[(&str, &str, &[&str], &str)] = &[
@@ -54,7 +60,59 @@ pub fn detect_backends() -> Vec<LlmBackend> {
         }
     }
 
-    backends
+    Ok(backends)
+}
+
+/// Outcome of an LLM query-expansion search: the FTS queries that were run
+/// (falls back to the original query when the LLM yields none) and the merged,
+/// un-deduplicated results of running each of them.
+pub struct ExpandedSearch {
+    pub queries: Vec<String>,
+    pub results: Vec<SearchResult>,
+}
+
+/// LLM search is query expansion over FTS: ask the backend to generate FTS
+/// queries for the user's intent, run each through the engine using the
+/// filters from `base` (`base.limit` applies per generated query), and merge.
+/// Callers dedup/sort the merged results with their own order.
+pub fn expanded_search(
+    engine: &IndexEngine,
+    backend: &LlmBackend,
+    user_query: &str,
+    base: &SearchParams,
+) -> Result<ExpandedSearch> {
+    let cancelled = AtomicBool::new(false);
+    expanded_search_cancellable(engine, backend, user_query, base, &cancelled)
+}
+
+pub fn expanded_search_cancellable(
+    engine: &IndexEngine,
+    backend: &LlmBackend,
+    user_query: &str,
+    base: &SearchParams,
+    cancelled: &AtomicBool,
+) -> Result<ExpandedSearch> {
+    let prompt = build_query_gen_prompt(user_query);
+    let response = invoke_cancellable(backend, &prompt, cancelled)?;
+    let mut queries = parse_query_gen_response(&response);
+    if queries.is_empty() {
+        queries = vec![user_query.to_string()];
+    }
+
+    let mut results = Vec::new();
+    for query in &queries {
+        if cancelled.load(Ordering::Relaxed) {
+            anyhow::bail!("LLM search cancelled");
+        }
+        let params = SearchParams {
+            query: query.clone(),
+            ..base.clone()
+        };
+        if let Ok(found) = engine.search(&params) {
+            results.extend(found);
+        }
+    }
+    Ok(ExpandedSearch { queries, results })
 }
 
 /// Build a prompt that asks the LLM to generate FTS queries for the user's intent.
@@ -103,8 +161,27 @@ fn strip_markdown_fences(response: &str) -> &str {
         .unwrap_or(trimmed)
 }
 
-/// Invoke the LLM backend in headless mode with the given prompt.
-pub fn invoke(backend: &LlmBackend, prompt: &str) -> Result<String> {
+/// Invoke with an explicit USD budget cap (applies to claude only; other
+/// backends have no budget flag).
+pub fn invoke_with_budget(backend: &LlmBackend, prompt: &str, budget_usd: f64) -> Result<String> {
+    let cancelled = AtomicBool::new(false);
+    invoke_with_budget_cancellable(backend, prompt, budget_usd, &cancelled)
+}
+
+pub fn invoke_cancellable(
+    backend: &LlmBackend,
+    prompt: &str,
+    cancelled: &AtomicBool,
+) -> Result<String> {
+    invoke_with_budget_cancellable(backend, prompt, 0.25, cancelled)
+}
+
+fn invoke_with_budget_cancellable(
+    backend: &LlmBackend,
+    prompt: &str,
+    budget_usd: f64,
+    cancelled: &AtomicBool,
+) -> Result<String> {
     let mut cmd = std::process::Command::new(&backend.binary);
 
     for arg in &backend.headless_args {
@@ -119,7 +196,7 @@ pub fn invoke(backend: &LlmBackend, prompt: &str) -> Result<String> {
 
     match backend.name.as_str() {
         "claude" => {
-            cmd.arg("--max-budget-usd").arg("0.05");
+            cmd.arg("--max-budget-usd").arg(format!("{budget_usd}"));
         }
         "copilot" => {
             cmd.arg("--allow-all-tools");
@@ -127,14 +204,79 @@ pub fn invoke(backend: &LlmBackend, prompt: &str) -> Result<String> {
         _ => {}
     }
 
-    let output = cmd.output()?;
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn()?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("failed to capture LLM stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("failed to capture LLM stderr"))?;
+    let stdout_reader = std::thread::spawn(move || {
+        let mut reader = stdout;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut reader, &mut bytes).map(|_| bytes)
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut reader = stderr;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut reader, &mut bytes).map(|_| bytes)
+    });
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("LLM invocation via {} failed: {stderr}", backend.name);
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let status = loop {
+        if cancelled.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        match child.wait_timeout(Duration::from_millis(100)) {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if Instant::now() < deadline => {}
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(err.into());
+            }
+        }
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("LLM stdout reader panicked"))??;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("LLM stderr reader panicked"))??;
+    if cancelled.load(Ordering::Relaxed) {
+        anyhow::bail!("LLM search cancelled");
+    }
+    let Some(status) = status else {
+        anyhow::bail!("LLM invocation via {} timed out after 180s", backend.name);
+    };
+
+    if !status.success() {
+        // Some tools (claude among them) print errors on stdout.
+        let stderr = String::from_utf8_lossy(&stderr);
+        let stdout = String::from_utf8_lossy(&stdout);
+        let detail = if stderr.trim().is_empty() {
+            stdout
+        } else {
+            stderr
+        };
+        anyhow::bail!(
+            "LLM invocation via {} failed: {}",
+            backend.name,
+            detail.trim()
+        );
     }
 
-    let stdout = String::from_utf8(output.stdout)?;
+    let stdout = String::from_utf8(stdout)?;
     Ok(stdout)
 }
 

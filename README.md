@@ -24,11 +24,12 @@
 
 - Full-text search (BM25 ranking via tantivy) across all your sessions
 - Interactive TUI with split-pane layout, real-time filtering, and session preview
+- **VS Code extension** — browse, search, tag and resume sessions from a sidebar hub ([details](docs/usage/vscode.md))
 - Fuzzy substring matching as alternative search mode
 - **Semantic search** — find conceptually similar sessions using ML embeddings (optional plugin)
 - **LLM search** — agentic search using installed AI CLI tools (Claude Code, OpenCode, Copilot)
 - Resume any session directly from the search results with directory choice
-- Incremental indexing — only processes new/changed sessions
+- Reconciled incremental indexing — adds and updates sessions and removes entries deleted at the source
 - **Automatic indexing** — background watcher re-indexes on session changes ([details](docs/usage/automatic-indexing.md))
 - **Agent skill** — use sessfind directly from GitHub Copilot CLI, Claude Code, or OpenCode ([details](docs/usage/agent-skill.md))
 - Zero external runtime dependencies — single static binary
@@ -63,10 +64,19 @@ sessfind
 
 Combine both: `sessfind --index`. See [Quick Start docs](https://letsdev-it.github.io/sessfind/getting-started/quick-start/) for more.
 
+## LLM data use
+
+Indexes, tags, and custom names stay local. Explicit LLM search sends the search
+intent to the selected installed AI CLI. Project summarization is available
+only from the CLI and sends session titles and excerpts from up to five recent
+conversations after printing a disclosure. Provider billing and limits remain
+authoritative.
+
 ## Documentation
 
 - [Installation](https://letsdev-it.github.io/sessfind/getting-started/installation/)
 - [Interactive TUI & Keybindings](https://letsdev-it.github.io/sessfind/usage/tui/)
+- [VS Code Extension](https://letsdev-it.github.io/sessfind/usage/vscode/)
 - [CLI Commands](https://letsdev-it.github.io/sessfind/usage/cli/)
 - [Search Modes](https://letsdev-it.github.io/sessfind/usage/search-modes/) (FTS, Fuzzy, LLM, Semantic)
 - [LLM Configuration](https://letsdev-it.github.io/sessfind/usage/llm-configuration/)
