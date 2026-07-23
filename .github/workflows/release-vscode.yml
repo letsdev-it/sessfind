@@ -13,7 +13,8 @@ on:
       - '.github/workflows/release-vscode.yml'
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
 
 concurrency:
   group: release-vscode-${{ github.ref }}
@@ -25,16 +26,9 @@ jobs:
     if: ${{ !github.event.repository.fork }}
     runs-on: ubuntu-24.04
     steps:
-      - name: Generate GitHub App token
-        id: app-token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.APP_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
-
       - name: Create or update release PR and GitHub release
         uses: googleapis/release-please-action@v4
         with:
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
