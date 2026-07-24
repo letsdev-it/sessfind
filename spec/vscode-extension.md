@@ -29,7 +29,11 @@ tags that can be removed from the session itself.
 ## Hub behavior
 
 The extension host owns CLI processes, settings, and caches. The webview owns
-rendering and transient UI state. Search is cancellable: a new query terminates
+rendering and transient UI state. An explicit `sessfind.binaryPath` overrides
+discovery; otherwise the host uses the executable on `PATH` and falls back to
+Cargo's standard `~/.cargo/bin/sessfind` location. This supports desktop-launched
+VS Code on macOS, whose extension-host environment may not load shell startup
+files. Search is cancellable: a new query terminates
 the previous process, uses the configured result limit, and reports failures in
 the hub. The configured default method applies until the user explicitly
 selects and persists another method.
