@@ -1,0 +1,43 @@
+name: Release VS Code assets
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: VS Code release tag to attach as an asset (for example vscode-v1.0.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  upload-vsix:
+    name: Build and upload VSIX
+    if: >-
+      (github.event_name == 'release' &&
+       startsWith(github.event.release.tag_name, 'vscode-v')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       startsWith(inputs.ref, 'vscode-v'))
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - run: npm ci
+      - run: npm run package
+      - name: Attach VSIX to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+          files: editors/vscode/*.vsix
