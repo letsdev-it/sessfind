@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.3](https://github.com/letsdev-it/sessfind/compare/vscode-v1.0.2...vscode-v1.0.3) (2026-07-24)
+
+
+### Bug Fixes
+
+* **ci:** release vscode for every product change ([3dc39aa](https://github.com/letsdev-it/sessfind/commit/3dc39aa146e87c140ffbaf01df287ddfc470d86b))
+* **ci:** release vscode for every product change ([ab8ca65](https://github.com/letsdev-it/sessfind/commit/ab8ca655010443e5cfe9cdb00ff5764c5eb2c57e))
+
 ## [1.0.2](https://github.com/letsdev-it/sessfind/compare/vscode-v1.0.1...vscode-v1.0.2) (2026-07-24)
 
 
