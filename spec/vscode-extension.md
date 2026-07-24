@@ -65,8 +65,10 @@ the extension run typechecking, unit tests, build, and package creation, while
 Rust checks run only for Rust/Cargo changes.
 
 Release automation mirrors the Cargo `release-plz` lifecycle. Conventional
-commits affecting the CLI or extension create or update a VS Code release PR;
-merging it updates the manifest, lockfile, version marker, and changelog, then
+commits affecting the CLI or extension create or update a VS Code release PR.
+Any other change to the CLI or extension, including bundled documentation,
+creates a patch release PR; workflow-only changes do not. Merging the release
+PR updates the manifest, lockfile, version marker, and changelog, then
 creates a `vscode-v<version>` GitHub Release and publishes a tested VSIX to the
 Marketplace. A separate release-assets workflow attaches the same versioned
 VSIX to the GitHub Release. When no new release is created, the Marketplace
