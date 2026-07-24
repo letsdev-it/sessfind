@@ -64,6 +64,18 @@ impl IndexState {
         Ok(rows.collect::<rusqlite::Result<HashSet<_>>>()?)
     }
 
+    pub fn session_keys(&self) -> Result<HashSet<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT source, session_id FROM indexed_sessions")?;
+        let rows = stmt.query_map([], |row| {
+            let source: String = row.get(0)?;
+            let session_id: String = row.get(1)?;
+            Ok(format!("{source}:{session_id}"))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<HashSet<_>>>()?)
+    }
+
     pub fn mark_indexed(&self, session: &Session) -> Result<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO indexed_sessions (source, session_id, file_path, file_mtime, file_size, indexed_at)

@@ -315,8 +315,12 @@ fn main() -> Result<()> {
         Some(cmd) => cmd,
         None => {
             let engine = open_engine()?;
-            // Index before launching TUI if requested
-            if cli.index {
+            // Index before launching TUI if requested or if opening the
+            // catalog recovered from a stale index/state mismatch.
+            if cli.index || engine.requires_reindex() {
+                if engine.requires_reindex() && !cli.index {
+                    eprintln!("Rebuilding session catalog after index recovery…");
+                }
                 let sources = get_sources("all")?;
                 for src in &sources {
                     if let Err(error) = engine.index_source(src.as_ref(), false) {

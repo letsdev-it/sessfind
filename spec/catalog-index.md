@@ -10,6 +10,10 @@ project, and extracted tool names.
 
 The index schema is versioned by field compatibility. Opening an older schema
 that lacks required fields rebuilds the searchable catalog from source data.
+Opening also verifies that the source-qualified session keys in Tantivy and the
+SQLite bookkeeping are identical. A mismatch clears the SQLite bookkeeping and the next
+catalog pass reconciles stale documents and rebuilds from the source logs,
+rather than treating missing documents as unchanged sessions.
 
 ## Reconciliation
 

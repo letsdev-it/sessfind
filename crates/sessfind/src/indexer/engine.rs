@@ -22,6 +22,7 @@ pub struct IndexEngine {
     index: Index,
     schema: Schema,
     state: IndexState,
+    requires_reindex: bool,
 }
 
 fn build_schema() -> Schema {
@@ -60,6 +61,24 @@ fn register_tokenizer(index: &Index) {
         .filter(Stemmer::default()) // English stemmer
         .build();
     index.tokenizers().register(TOKENIZER_NAME, analyzer);
+}
+
+fn indexed_session_keys(index: &Index, schema: &Schema) -> Result<HashSet<String>> {
+    let reader = index.reader()?;
+    let searcher = reader.searcher();
+    let session_key = schema.get_field("session_key")?;
+    let docs = searcher.search(&AllQuery, &TopDocs::with_limit(100_000))?;
+
+    Ok(docs
+        .into_iter()
+        .filter_map(|(_, address)| {
+            let document: tantivy::TantivyDocument = searcher.doc(address).ok()?;
+            document
+                .get_first(session_key)
+                .and_then(|value| value.as_str())
+                .map(str::to_owned)
+        })
+        .collect())
 }
 
 impl IndexEngine {
@@ -103,21 +122,33 @@ impl IndexEngine {
             Index::create_in_dir(&index_path, schema.clone())?
         };
 
-        register_tokenizer(&index);
-
         let state = IndexState::open(&data_dir.join("index_state.db"))?;
 
-        // If the tantivy index was wiped (tokenizer upgrade), clear state so
-        // every session is re-indexed on the next run.
-        if rebuilt {
+        let catalog_mismatch = state.session_keys()? != indexed_session_keys(&index, &schema)?;
+        // The SQLite state is only valid when it describes the documents that
+        // are actually present in Tantivy. If a migration or interrupted run
+        // leaves them out of sync, keeping the state would permanently skip
+        // the missing sessions as "unchanged".
+        let requires_reindex = rebuilt || catalog_mismatch;
+        if requires_reindex {
+            if !rebuilt {
+                eprintln!("Recreating search index (catalog recovery)…");
+            }
             state.clear()?;
         }
+
+        register_tokenizer(&index);
 
         Ok(Self {
             index,
             schema,
             state,
+            requires_reindex,
         })
+    }
+
+    pub fn requires_reindex(&self) -> bool {
+        self.requires_reindex
     }
 
     pub fn index_source(&self, source: &dyn SessionSource, force: bool) -> Result<IndexStats> {
@@ -138,7 +169,9 @@ impl IndexEngine {
         let sessions = source.list_sessions()?;
         let mut stats = IndexStats::default();
 
-        let indexed_ids = self.state.session_ids(source_name)?;
+        let state_ids = self.state.session_ids(source_name)?;
+        let document_ids = self.indexed_session_ids(source_name)?;
+        let indexed_ids: HashSet<String> = state_ids.union(&document_ids).cloned().collect();
         let discovered_ids: HashSet<String> = sessions
             .iter()
             .map(|session| session.session_id.clone())
@@ -185,6 +218,13 @@ impl IndexEngine {
             };
 
             let chunks = chunker::chunk_session(session, &messages);
+            if chunks.is_empty() {
+                // A session without indexable content has no Tantivy document,
+                // so it must not be recorded as indexed in SQLite. Otherwise
+                // the catalog integrity check would see a permanent mismatch.
+                stats.skipped_sessions += 1;
+                continue;
+            }
             stats.total_chunks += chunks.len();
             if indexed_ids.contains(&session.session_id) {
                 stats.updated_sessions += 1;
@@ -252,6 +292,26 @@ impl IndexEngine {
 
         writer.add_document(doc)?;
         Ok(())
+    }
+
+    fn indexed_session_ids(&self, source_name: &str) -> Result<HashSet<String>> {
+        let reader = self.index.reader()?;
+        let searcher = reader.searcher();
+        let session_key = self.schema.get_field("session_key")?;
+        let prefix = format!("{source_name}:");
+        let docs = searcher.search(&AllQuery, &TopDocs::with_limit(100_000))?;
+
+        Ok(docs
+            .into_iter()
+            .filter_map(|(_, address)| {
+                let document: tantivy::TantivyDocument = searcher.doc(address).ok()?;
+                document
+                    .get_first(session_key)
+                    .and_then(|value| value.as_str())
+                    .and_then(|key| key.strip_prefix(&prefix))
+                    .map(str::to_owned)
+            })
+            .collect())
     }
 
     pub fn search(&self, params: &SearchParams) -> Result<Vec<SearchResult>> {
@@ -944,6 +1004,38 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn catalog_mismatch_clears_state_and_stale_documents() {
+        let temp = TempDir::new().unwrap();
+        {
+            let engine = IndexEngine::open(temp.path()).unwrap();
+            let source = TestSource {
+                name: "claude",
+                sessions: vec![test_session(Source::ClaudeCode, "one", 1)],
+                text: "indexed conversation",
+            };
+            engine.index_source(&source, false).unwrap();
+
+            // Simulate an interrupted migration: SQLite claims another session
+            // is indexed, but Tantivy has no document for it.
+            engine
+                .state
+                .mark_indexed(&test_session(Source::Codex, "missing", 1))
+                .unwrap();
+        }
+
+        let recovered = IndexEngine::open(temp.path()).unwrap();
+        assert!(recovered.requires_reindex());
+        assert_eq!(recovered.session_count(None).unwrap(), 0);
+        let source = TestSource {
+            name: "claude",
+            sessions: vec![test_session(Source::ClaudeCode, "one", 1)],
+            text: "indexed conversation",
+        };
+        recovered.index_source(&source, false).unwrap();
+        assert_eq!(recovered.list_sessions().unwrap().len(), 1);
     }
 
     #[test]
