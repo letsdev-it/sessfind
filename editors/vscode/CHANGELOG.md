@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.2](https://github.com/letsdev-it/sessfind/compare/vscode-v1.0.1...vscode-v1.0.2) (2026-07-24)
+
+
+### Bug Fixes
+
+* **vscode:** discover Cargo binary outside PATH ([8e5eb29](https://github.com/letsdev-it/sessfind/commit/8e5eb298b358fe0987175c8c14e62f1ae195723a))
+* **vscode:** discover Cargo binary outside PATH ([17cc814](https://github.com/letsdev-it/sessfind/commit/17cc814685f87c5b4b4d3f73e050c02b2fedd88f))
+
 ## [1.0.1](https://github.com/letsdev-it/sessfind/compare/vscode-v1.0.0...vscode-v1.0.1) (2026-07-24)
 
 
