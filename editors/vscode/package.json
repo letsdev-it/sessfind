@@ -2,7 +2,7 @@
   "name": "sessfind",
   "displayName": "Sessfind",
   "description": "Search, browse and resume your AI coding-assistant sessions from VS Code.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "publisher": "letsdev-it",
   "license": "MIT",
   "repository": {
