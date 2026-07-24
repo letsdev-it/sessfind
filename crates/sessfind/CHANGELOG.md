@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.9.1...sessfind-v0.9.2) - 2026-07-24
+
+### Fixed
+
+- *(index)* recover stale catalog state
+
 ## [0.9.1](https://github.com/letsdev-it/sessfind/compare/sessfind-v0.9.0...sessfind-v0.9.1) - 2026-07-23
 
 ### Other
