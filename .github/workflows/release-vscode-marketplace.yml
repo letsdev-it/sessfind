@@ -32,9 +32,24 @@ jobs:
     if: ${{ github.event_name == 'push' && !github.event.repository.fork }}
     runs-on: ubuntu-24.04
     outputs:
-      release_created: ${{ steps.release-please.outputs.release_created }}
-      tag_name: ${{ steps.release-please.outputs.tag_name }}
+      release_created: ${{ steps.release-please.outputs.release_created == 'true' || steps.force-patch.outputs.release_created == 'true' }}
+      tag_name: ${{ steps.release-please.outputs.tag_name || steps.force-patch.outputs.tag_name }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect product changes that require a VS Code release
+        id: product-change
+        run: |
+          if git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- \
+            crates Cargo.toml Cargo.lock .cargo rust-toolchain.toml rust-toolchain \
+            editors/vscode; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "changed=true" >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v1
@@ -51,6 +66,27 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      - name: Calculate forced patch version
+        id: forced-version
+        if: >-
+          steps.product-change.outputs.changed == 'true' &&
+          steps.release-please.outputs.prs_created != 'true' &&
+          steps.release-please.outputs.release_created != 'true'
+        run: |
+          version="$(cat editors/vscode/version.txt)"
+          IFS=. read -r major minor patch <<< "${version}"
+          echo "version=${major}.${minor}.$((patch + 1))" >> "${GITHUB_OUTPUT}"
+
+      - name: Create patch release for non-releasable product changes
+        id: force-patch
+        if: steps.forced-version.outputs.version != ''
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          release-as: ${{ steps.forced-version.outputs.version }}
 
   pending-release:
     name: Detect unpublished VS Code release
