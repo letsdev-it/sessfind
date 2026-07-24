@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import * as vscode from "vscode";
 import type {
   Capabilities,
@@ -38,11 +40,24 @@ export class SessfindClient {
   private sessionCache: Promise<SessionSummary[]> | undefined;
   private capsCache: Promise<Capabilities> | undefined;
 
-  private binaryPath(): string {
-    return (
-      vscode.workspace.getConfiguration("sessfind").get<string>("binaryPath") ||
-      "sessfind"
-    );
+  private binaryPaths(): string[] {
+    const configured = vscode.workspace
+      .getConfiguration("sessfind")
+      .get<string>("binaryPath");
+    if (configured && configured !== "sessfind") {
+      return [configured];
+    }
+
+    // VS Code launched from Finder/Dock does not inherit the user's shell
+    // startup files, so PATH often omits Cargo's bin directory on macOS. Try
+    // PATH first, then an existing standard Cargo installation. An explicit
+    // binaryPath above always takes precedence.
+    const cargoHome = process.env.CARGO_HOME ||
+      (process.env.HOME ? join(process.env.HOME, ".cargo") : undefined);
+    const cargoBinary = cargoHome ? join(cargoHome, "bin", "sessfind") : undefined;
+    return cargoBinary && existsSync(cargoBinary)
+      ? ["sessfind", cargoBinary]
+      : ["sessfind"];
   }
 
   private run(
@@ -50,7 +65,17 @@ export class SessfindClient {
     token?: vscode.CancellationToken,
     timeoutMs?: number,
   ): Promise<string> {
-    const bin = this.binaryPath();
+    const [bin, ...fallbacks] = this.binaryPaths();
+    return this.runBinary(bin, fallbacks, args, token, timeoutMs);
+  }
+
+  private runBinary(
+    bin: string,
+    fallbacks: string[],
+    args: string[],
+    token?: vscode.CancellationToken,
+    timeoutMs?: number,
+  ): Promise<string> {
     return new Promise((resolve, reject) => {
       let cancellation: vscode.Disposable | undefined;
       // Node forwards spawn options to execFile at runtime, although the
@@ -71,6 +96,19 @@ export class SessfindClient {
           cancellation?.dispose();
           if (err) {
             const code = (err as NodeJS.ErrnoException).code;
+            if (code === "ENOENT" && fallbacks.length > 0) {
+              const [fallback, ...remainingFallbacks] = fallbacks;
+              resolve(
+                this.runBinary(
+                  fallback,
+                  remainingFallbacks,
+                  args,
+                  token,
+                  timeoutMs,
+                ),
+              );
+              return;
+            }
             if (code === "ENOENT") {
               reject(
                 new BinaryNotFoundError(

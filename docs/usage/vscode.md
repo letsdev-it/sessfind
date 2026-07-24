@@ -10,7 +10,10 @@ its `--json` output. Everything the extension does is also available from the
 
 ## Requirements
 
-- The `sessfind` binary on your `PATH` (or set `sessfind.binaryPath`).
+- The `sessfind` binary. If VS Code is launched from the desktop and does not
+  inherit your shell `PATH`, the extension automatically detects Cargo's
+  standard installation path (`~/.cargo/bin/sessfind`). Set
+  `sessfind.binaryPath` only for a non-standard installation.
 - An index built at least once: run `sessfind index`, or use the **Refresh
   Index** button in the Projects view.
 
@@ -80,7 +83,7 @@ actions on every row.
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `sessfind.binaryPath` | `sessfind` | Path to the binary (absolute if not on `PATH`). |
+| `sessfind.binaryPath` | `sessfind` | Override path for a non-standard binary installation. |
 | `sessfind.searchLimit` | `50` | Max search results to fetch. |
 | `sessfind.defaultSearchMethod` | `fts` | Default search method. |
 
