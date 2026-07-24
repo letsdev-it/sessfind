@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/letsdev-it/sessfind/compare/vscode-v1.0.0...vscode-v1.0.1) (2026-07-24)
+
+
+### Bug Fixes
+
+* **index:** recover stale catalog state ([13fc690](https://github.com/letsdev-it/sessfind/commit/13fc690aaf89018af45bcbde57b4007d8b09fe6f))
+* **index:** recover stale catalog state ([0fac9c5](https://github.com/letsdev-it/sessfind/commit/0fac9c5dc9defe68afebdeda0998114f416d5d91))
+
 ## [1.0.0](https://github.com/letsdev-it/sessfind/compare/vscode-v0.1.0...vscode-v1.0.0) (2026-07-23)
 
 
