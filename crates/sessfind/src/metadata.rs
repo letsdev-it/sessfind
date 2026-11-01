@@ -142,24 +142,30 @@ impl MetadataStore {
             .iter()
             .flat_map(|(key, id)| [key.as_str(), id.as_str()])
             .collect();
-        let placeholders = std::iter::repeat_n("?", lookup_ids.len())
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql = format!(
-            "SELECT session_id, tag FROM tags WHERE session_id IN ({placeholders}) ORDER BY tag"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let params = rusqlite::params_from_iter(lookup_ids);
-        let rows = stmt.query_map(params, |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
+        let mut found: Vec<(String, String)> = Vec::new();
+        for chunk in lookup_ids.chunks(100) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT session_id, tag FROM tags WHERE session_id IN ({placeholders}) ORDER BY tag"
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(chunk.iter().copied()), |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+            for row in rows {
+                found.push(row?);
+            }
+        }
+        found.sort_by(|a, b| a.1.cmp(&b.1));
         let keys_by_native: HashMap<&str, Vec<&str>> =
             sessions.iter().fold(HashMap::new(), |mut acc, (key, id)| {
                 acc.entry(id.as_str()).or_default().push(key.as_str());
                 acc
             });
-        for row in rows {
-            let (stored_id, tag) = row?;
+        for (stored_id, tag) in found {
             if sessions.iter().any(|(key, _)| key == &stored_id) {
                 let tags = map.entry(stored_id).or_default();
                 if !tags.contains(&tag) {
@@ -219,24 +225,30 @@ impl MetadataStore {
             .iter()
             .flat_map(|(key, id)| [key.as_str(), id.as_str()])
             .collect();
-        let placeholders = std::iter::repeat_n("?", lookup_ids.len())
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql = format!(
-            "SELECT session_id, name FROM session_names WHERE session_id IN ({placeholders})"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(lookup_ids), |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
+        let mut found: Vec<(String, String)> = Vec::new();
+        for chunk in lookup_ids.chunks(100) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT session_id, name FROM session_names WHERE session_id IN ({placeholders})"
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(chunk.iter().copied()), |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+            for row in rows {
+                found.push(row?);
+            }
+        }
         let keys_by_native: HashMap<&str, Vec<&str>> =
             sessions.iter().fold(HashMap::new(), |mut acc, (key, id)| {
                 acc.entry(id.as_str()).or_default().push(key.as_str());
                 acc
             });
         let mut legacy = Vec::new();
-        for row in rows {
-            let (stored_id, name) = row?;
+        for (stored_id, name) in found {
             if sessions.iter().any(|(key, _)| key == &stored_id) {
                 map.insert(stored_id, name);
             } else {
@@ -330,6 +342,26 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = MetadataStore::open(&dir.path().join("metadata.db")).unwrap();
         (dir, store)
+    }
+
+    #[test]
+    fn bulk_lookups_handle_more_sessions_than_sqlite_variable_limit() {
+        let (_d, s) = store();
+        // Each session contributes two lookup ids, so this exceeds SQLite's
+        // default limit of 32766 host parameters in a single statement.
+        let sessions: Vec<(String, String)> = (0..20_000)
+            .map(|i| (format!("src:{i}"), format!("{i}")))
+            .collect();
+        s.add_tag("src:19999", "work").unwrap();
+        s.set_session_name("src:0", "first").unwrap();
+
+        let tags = s.tags_for_sessions(&sessions).unwrap();
+        assert_eq!(
+            tags.get("src:19999").map(Vec::as_slice),
+            Some(&["work".to_string()][..])
+        );
+        let names = s.names_for_sessions(&sessions).unwrap();
+        assert_eq!(names.get("src:0").map(String::as_str), Some("first"));
     }
 
     #[test]
